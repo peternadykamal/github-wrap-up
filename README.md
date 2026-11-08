@@ -1,4 +1,4 @@
-# GitHub Year in Review
+# GitHub Wrap Up
 
 A portable Agent Skill that researches GitHub history, builds an evidence-backed vertical timeline, and creates a personalized Wrapped with an offline HTML export. Supports one person, a team, an organization, or people scoped to an organization. Low, Medium (default), and High combine research depth with runtime-supported model/effort choices.
 
@@ -13,15 +13,15 @@ The reusable entrypoint is [SKILL.md](SKILL.md), following the [Agent Skills for
 
 ## Install with one prompt
 
-Copy this into your coding agent and attach `github-year-in-review.zip`, or include the repository URL in the same message:
+Copy this into your coding agent:
 
 ```text
-Install GitHub Year in Review from the attached ZIP or the repository link in this message for the coding agent I am using. Follow INSTALL.md, choose the correct skill directory automatically, verify the installation and prerequisites, and tell me how to invoke it. Let me complete any GitHub sign-in.
+Install GitHub Year in Review from https://github.com/peternadykamal/github-wrap-up for the coding agent I am using. Follow INSTALL.md, choose the correct skill directory automatically, verify the installation and prerequisites, and tell me how to invoke it. Let me complete any GitHub sign-in.
 ```
 
 The agent handles download/extraction, destination selection and installation. It only needs your help if the source is inaccessible, the destination is genuinely ambiguous, or installation/sign-in requires permissions it does not have. The installed skill remains separate from a research run.
 
-For link-only installation, include the real published repository URL. The source must be accessible to the agent; a ZIP works without publishing anything.
+The agent needs access to the repository if it is private. For ZIP installation, attach `github-year-in-review.zip` and tell the agent to use the attachment instead of the repository URL.
 
 ## Manual installation
 
