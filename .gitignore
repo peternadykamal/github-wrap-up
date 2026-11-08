@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+dist/
+artifacts/
+runs/
+outputs/
+year-in-review.html
+.DS_Store

@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Year in Review"
+  short_description: "Research a year of work and create a personal Wrapped"
+  default_prompt: "Use $github-year-in-review to research my GitHub year and create an evidence-backed timeline and personalized Wrapped."

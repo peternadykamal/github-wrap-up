@@ -1,0 +1,30 @@
+# Harness compatibility
+
+Read before dispatch or when the host changes. `<skill>` means the directory containing the loaded SKILL.md, not the current working directory or a hardcoded home path. Resolve script/template paths from there. `<run>` is a separate, absolute directory holding the frozen research archive and analysis.
+
+The workflow depends on capabilities, not a product name. SKILL.md is the shared entrypoint; `agents/openai.yaml` supplies optional Codex UI metadata and can be ignored by other hosts. Do not require Codex tools, ChatGPT hosting, MCP, another skill, or a particular model provider to complete the local workflow.
+
+## Negotiate capabilities
+
+1. Establish local file reading/writing, shell execution, Git, authenticated gh and Python. If these are unavailable, explain the actual blocker; a chat-only host cannot collect or build this skill's artifacts. Respect its approval and filesystem policies. Never open studied source code as executable work.
+2. Use the host's available way to ask the target-scope question: native input UI if present, otherwise ordinary chat. Continue other independent work when the host permits it. Do not assume `request_user_input`, a particular UI, or `$` invocation syntax exists.
+3. Inspect actual agent tools or supported agent configuration. Capture available models and exposed controls in a version-2 runtime catalog, following model-selection.md. Consult the relevant provider/harness's official documentation when needed. Do not use a public provider model list as proof of account or harness availability.
+4. Use a native agent tool or permitted agent-definition interface when available. Root can schedule all logical roles when nested delegation is absent. Each worker must be able to access the assigned evidence and scripts and save its outputs. A remote worker without the run files is not a valid local worker; either transfer a bounded packet through its supported tools and recover its artifacts, or run locally/sequentially.
+5. If the model can be selected but effort cannot, use the version-2 model-only path: requested effort is null, effortControl is inherited, and the unachieved effort profile is disclosed. Do not fabricate an effort label or modify session-wide environment variables to force one.
+6. If usable agents/model selection/discovery are unavailable, plan with `--execution sequential-fallback --reason '<actual runtime limitation>'` and record the actual runtime reason. Perform logical research jobs and review passes serially, within the same work allowances. Register the actual root agent/session ID consistently (a stable local `root` label if the host exposes none). Inherited settings and absent review independence remain visible.
+7. Use a native browser/preview tool if available for visual inspection; otherwise build/export, run static checks and explicitly report that browser visual inspection was unavailable. Deliver local file paths using the host's native file-link conventions. Publishing is optional and separately authorized.
+
+Browser sign-in is not a replacement for gh authentication. Do not install another agent CLI, acquire model API access, change global agent settings or start extra paid sessions as a portability workaround.
+
+## Native launch adapters
+
+The resolver produces data for the coordinator to apply. It does not execute a vendor agent API or write agent configurations. Version 2 supplies `adapter.kind`, `adapter.interface`, JSON paths for model/effort, and the actual fresh-context mechanism. `launch-spec` and `job --preview` return this native dispatch envelope. Use only controls actually advertised by the host; add the normal task prompt/name separately. Do not pass the dispatch envelope itself as tool arguments: `arguments` is the native payload and `interface` identifies its target.
+
+- **Codex adapter:** map model/effort paths and fresh-history control to the actual exposed spawn tool. Where it uses model, reasoning_effort and fork_turns, capture those fields in the catalog rather than embedding them in the core workflow. Explicit overrides may require a fresh context.
+- **Claude Code adapter:** read the current Agent tool or supported custom-agent definition fields. If this version exposes model and effort, map those fields and native separate-context behavior. If only definition-time fields are supported, use kind `agent-configuration` and a narrowly scoped agent definition in the run's permitted workspace, not global settings. If this cannot be applied under the host's permissions, use the declared partial/sequential fallback. Do not force a `fork_turns` parameter into Claude's interface. Official model/effort behavior: [subagents](https://code.claude.com/docs/en/sub-agents).
+- **Copilot or another host:** a recognized SKILL.md does not guarantee configurable subagents. Capture only its actual interface. A model-only host remains usable with inherited effort; a host lacking usable controls follows the sequential route. Never fabricate agent IDs or independent review from repeated prompts in one conversation.
+- **Numeric/structured reasoning:** an advertised effort label can map through that model's effortValues to its native numeric or JSON value. Labels are local accounting names; retain the original native value and its source. Different providers' budgets/labels are not assumed equivalent.
+
+Keep requested and effective settings separate. If a native runtime reports only numeric settings, preserve the raw report and normalize to the catalog's effort label only when that exact mapping is established. Generic successful dispatch does not establish the actual effective backend model or effort.
+
+Frozen version-1 runs retain their original Codex-shaped launch requests and hashes; they are not rewritten or reinterpreted. New catalogs use version 2. Moving an active run across hosts requires a documented replacement resolution, new actual worker contexts, and renewed validation, while preserving prior artifacts and usage. If the underlying archived scope changes, use a new run.

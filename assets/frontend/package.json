@@ -1,0 +1,32 @@
+{
+  "name": "github-year-in-review",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "dev": "node scripts/verify-input.mjs && vite --host 127.0.0.1",
+    "check": "node scripts/verify-input.mjs && tsc --noEmit",
+    "build": "node scripts/verify-input.mjs && tsc --noEmit && vite build && node scripts/export.mjs",
+    "export": "npm run build",
+    "preview": "node scripts/verify-input.mjs && vite preview --host 127.0.0.1",
+    "test": "node --test scripts/verify-input.test.mjs"
+  },
+  "dependencies": {
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "recharts": "3.8.0",
+    "lucide-react": "1.31.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "@tailwindcss/postcss": "4.2.1",
+    "tailwindcss": "4.2.1",
+    "postcss": "8.5.6",
+    "typescript": "5.9.3",
+    "vite": "8.0.13",
+    "esbuild": "0.28.0"
+  }
+}
