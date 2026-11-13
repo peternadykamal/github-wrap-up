@@ -10,6 +10,7 @@ import shutil
 import sys
 
 import model_policy
+from validate_analysis import inspection_digest, validate
 
 
 def digest(path: Path) -> str:
@@ -38,6 +39,14 @@ def create(data_path: Path, decisions_path: Path, output: Path, run: Path | None
     for key, path in bound:
         if not path.is_file() or decisions.get(key) != digest(path):
             raise ValueError(f"Inspection seal is missing or stale for {key}. Revalidate the research.")
+    inspection_hash = decisions.get('inspectionInputsSha256')
+    if inspection_hash is None:
+        # Existing approval files predate the inspection digest. Recheck their full inputs.
+        if decisions_path != run / 'analysis/inspection/decisions.json':
+            raise ValueError('Revalidate legacy approval from the run’s inspection directory.')
+        validate(run, data_path)
+    elif inspection_hash != inspection_digest(run):
+        raise ValueError('Inspection inputs changed after approval. Renew inspection before building.')
     plan = json.loads((run / "analysis/research-plan.json").read_text()) if "researchPlanSha256" in decisions else {}
     for resolution in model_policy.all_resolutions(plan).values():
         model_policy.validate_resolution(run, resolution)
@@ -58,6 +67,8 @@ def create(data_path: Path, decisions_path: Path, output: Path, run: Path | None
     (output / "src/data.json").write_bytes(data_path.read_bytes())
     provenance = {key: decisions[key] for key, _ in bound}
     provenance.update({"schemaVersion": 1, "status": "inspector-approved", "rawSourceIncluded": False, "researchMode": decisions.get("researchMode", "legacy-unmetered")})
+    if inspection_hash:
+        provenance['inspectionInputsSha256'] = inspection_hash
     if plan.get("modelSelection"):
         selection = plan["modelSelection"]
         provenance["modelProfiles"] = {"status": selection["status"], "executionMode": plan["executionMode"],

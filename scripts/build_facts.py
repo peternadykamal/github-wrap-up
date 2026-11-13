@@ -30,10 +30,13 @@ def build(run):
  aliases={x.casefold():s['id']for s in subjects for x in [s['id'],s.get('login',s['id']),*s.get('aliases',{}).get('logins',[])]}
  def canonical(a):return aliases.get(str(a).casefold(),a)
  records={};conflicts=[]
- for file in sorted((run/'repos').glob('*/records.jsonl')):
+ for repository in sorted(set(m['repos'])):
+  file = run / 'repos' / repository.replace('/', '__') / 'records.jsonl'
   for r in rows(file):
    for k in ['id','kind','repo','occurredAt','data']:
     if k not in r:raise ValueError(f'{file}: missing {k}')
+   if r['repo'] != repository:
+    raise ValueError(f'{file}: record repository does not match the manifest')
    r['actor']=canonical(r.get('actor'));data=r['data'];data['author']=canonical(data.get('author',r['actor']));data['mergedBy']=canonical(data.get('mergedBy'))
    prior=records.get(r['id'])
    if prior and prior!=r:conflicts.append(r['id'])
@@ -41,7 +44,7 @@ def build(run):
  # Repository membership and original IDs remain traceable even when SHAs repeat.
  commits={};source_index={};prs={};source_by_sha=collections.defaultdict(list)
  for r in records.values():
-  d=r['data'];idx={k:r.get(k)for k in ['id','kind','repo','actor','occurredAt','url','title']};idx['data']={k:d.get(k)for k in ['sha','merge','detail','coauthors','number','prNumber','state','createdAt','mergedAt','closedAt','author','mergedBy','status','conclusion','environment','targetSha','draft','publishedAt','tag','prerelease']if k in d};source_index[r['id']]=idx
+  d=r['data'];idx={k:r.get(k)for k in ['id','kind','repo','actor','occurredAt','url','title']};idx['data']={k:d.get(k)for k in ['sha','merge','detail','coauthors','number','prNumber','state','createdAt','mergedAt','closedAt','author','mergedBy','status','conclusion','environment','targetSha','headSha','mergeCommitSha','commits','statuses','authoredAt','committedAt','draft','publishedAt','tag','prerelease']if k in d};source_index[r['id']]=idx
   if r['kind']=='pull_request':prs[(r['repo'],d.get('number'))]=r
   if r['kind']!='commit':continue
   sha=d.get('sha');stamp=d.get('committedAt'if w.get('dateBasis')=='committed'else'authoredAt')or r['occurredAt']

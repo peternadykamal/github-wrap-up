@@ -1,7 +1,7 @@
 export type Evidence = { id: string; url: string; label: string; excerpt?: string };
 export type Person = { id: string; name: string; color: string; headline: string };
 export type Metric = { value: string; label: string; basis: string };
-export type Beat = { title: string; body: string; label?: string; url?: string };
+export type Beat = { title: string; body: string; label?: string; sourceId?: string; url?: string };
 export type Chapter = {
   id: string; title: string; kicker: string; body: string; insight?: string;
   layout: "cover"|"journey"|"contrast"|"map"|"ledger"|"spotlight"|"finale";
@@ -18,5 +18,5 @@ export type Presentation = {
   meta: { title: string; start: string; endExclusive: string; timezone: string; snapshotAt: string;
     coverageNotes: string[]; totals?: Record<string, Totals> };
   people: Person[]; timeline: Milestone[]; stories: Story[]; activity: Activity[];
-  coverage: { summary: string; limitations: string[] };
+  coverage: { summary: string; limitations: string[]; status?: "complete" | "partial" };
 };

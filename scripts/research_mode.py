@@ -132,6 +132,8 @@ def packet(run,pid,source_ids,bundle_id,phase=0,level='metadata',file=None,job_i
  if level not in ['metadata','diff','discussion','historical_source']:raise ValueError('Unknown packet level')
  source_ids=list(dict.fromkeys(source_ids));facts=load(run/'analysis/facts.json');sources=facts['sourceIndex']
  if not source_ids or len(source_ids)>80 or any(s not in sources for s in source_ids):raise ValueError('Supply 1–80 collected source IDs')
+ if reading_job['repos'] and any(sources[sid]['repo'] not in reading_job['repos'] for sid in source_ids):
+  raise ValueError('Packet includes sources outside the job repository assignment')
  if file and len(source_ids)!=1:raise ValueError('A custom historical file must have one supporting source ID')
  items=[]
  for sid in source_ids:
@@ -158,11 +160,12 @@ def packet(run,pid,source_ids,bundle_id,phase=0,level='metadata',file=None,job_i
 
 def brief(run,pid,job_id=None):
  run,_,_=paths(run);plan=current(run);allowance(plan,pid);reading_job=reader(run,pid,job_id)
- if sum(e.get('kind')=='brief'and e.get('subjectId')==pid for e in ledger(run))>=plan['limits']['briefReadsPerSubject']:raise ValueError('Brief re-read allowance exhausted; reuse the existing context')
+ if sum(e.get('kind')=='brief'and e.get('jobId')==reading_job['jobId'] for e in ledger(run))>=plan['limits']['briefReadsPerSubject']:raise ValueError('Brief re-read allowance exhausted; reuse the existing context')
  f=load(run/'analysis/facts.json');subject=f['team']if pid=='team'else f['people'][pid];items=[]
  # Round-robin across month/repo/role, not top activity. Counts stay exhaustive on disk.
  buckets={}
  for sid,s in f['sourceIndex'].items():
+  if reading_job['repos'] and s['repo'] not in reading_job['repos']:continue
   d=s.get('data',{});involved={s.get('actor'),d.get('author'),d.get('mergedBy'),*d.get('coauthors',[])}
   if pid!='team'and pid not in involved:continue
   if pid=='team'and not(set(plan['people'])&involved):continue
@@ -175,7 +178,8 @@ def brief(run,pid,job_id=None):
  while len(selected)<12 and any(month_groups.values()):
   for month in sorted(month_groups):
    if month_groups[month] and len(selected)<12:selected.append(month_groups[month].pop(0))
- value={'budgetEntryId':f'usage-{len(ledger(run))+1:06d}','subjectId':pid,'totals':subject['totals'],'monthly':subject['monthly'][:36],'monthlyRowsAvailable':len(subject['monthly']),'repositories':subject['observedRepositories'][:32],'repositoriesAvailable':len(subject['observedRepositories']),'items':selected,'availableSourceGroups':group_count,'selectionLimited':len(selected)<group_count or len(subject['monthly'])>36 or len(subject['observedRepositories'])>32,'coverage':f['coverage'].get('status'),'note':'Scripted metadata briefing; selected titles are leads. Full inventory/facts remain on disk; unrepresented groups are not inspected.'}
+ assigned_repos = reading_job['repos'] or subject['observedRepositories']
+ value={'budgetEntryId':f'usage-{len(ledger(run))+1:06d}','subjectId':pid,'totals':subject['totals'],'monthly':subject['monthly'][:36],'monthlyRowsAvailable':len(subject['monthly']),'repositories':assigned_repos[:32],'repositoriesAvailable':len(assigned_repos),'items':selected,'availableSourceGroups':group_count,'selectionLimited':len(selected)<group_count or len(subject['monthly'])>36 or len(assigned_repos)>32,'coverage':f['coverage'].get('status'),'note':'Selected titles are leads within the repository assignment. Totals and monthly facts describe the full subject scope.'}
  while True:
   try:result=bound_packet(json.loads(json.dumps(value)),plan['limits']['packetChars']);break
   except ValueError:
@@ -281,7 +285,9 @@ def validate_mode(run,judge,read_log):
   elif e['kind']!='tokens':raise ValueError('Unknown mode ledger entry')
  for pid in [*plan['people'],'team']:
   caps=allowance(plan,pid)
-  if sum(e['kind']=='brief'and e.get('subjectId')==pid for e in entries)>plan['limits']['briefReadsPerSubject']:raise ValueError('Brief reading limit exceeded')
+  for job_id, job_entry in jobs.items():
+   if job_entry['subjectId']==pid and sum(e['kind']=='brief' and e.get('jobId')==job_id for e in entries)>plan['limits']['briefReadsPerSubject']:
+    raise ValueError('Brief reading limit exceeded for job')
   for phase in range(caps['followUpRounds']+1):
    count=sum(e['kind']=='packet'and e.get('subjectId')==pid and e.get('round')==phase for e in entries);maximum=caps['initialBundles']if phase==0 else caps['followUpBundlesPerRound']
    if count>maximum:raise ValueError('Evidence bundle allowance exceeded')

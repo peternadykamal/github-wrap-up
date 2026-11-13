@@ -91,6 +91,16 @@ class ModeTests(unittest.TestCase):
   mode.initialize(self.root,'medium',authorization='User selected Medium')
   with self.assertRaisesRegex(ValueError,'uncertainty'):mode.job(self.root,'team','challenge','challenge',agent='other')
   mode.job(self.root,'team','challenge','challenge',agent='other',reason='Conflicting source claims')
+ def test_medium_batches_can_each_start_with_scoped_brief(self):
+  mode.initialize(self.root, 'medium')
+  for index in range(3):
+   job_id = 'batch-' + str(index)
+   mode.job(self.root, 'alice', job_id, 'researcher', ['demo/two'], job_id)
+   report = mode.brief(self.root, 'alice', job_id)
+   self.assertEqual(report['repositories'], ['demo/two'])
+   self.assertTrue(all(item['repo'] == 'demo/two' for item in report['items']))
+  with self.assertRaisesRegex(ValueError, 'repository assignment'):
+   mode.packet(self.root, 'alice', [self.a['id']], 'outside-batch', job_id='batch-0')
  def test_brief_has_bounded_metadata(self):
   self.start();r=mode.brief(self.root,'alice','alice-worker');self.assertEqual(r['totals']['commits'],1);self.assertLessEqual(len(json.dumps(r,ensure_ascii=False)),12000)
   mode.brief(self.root,'alice','alice-worker')

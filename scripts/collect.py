@@ -289,16 +289,22 @@ class Collector:
         self.previous=read(self.root/'manifest.json',{})
         self.input_hash=digest(config)
         self.config=normalize_config(config,self.previous if not refresh else None)
-        if self.config.get('expandOrganizationContributors') and self.previous.get('inputConfigHash')==self.input_hash:
+        if not refresh and self.config.get('expandOrganizationContributors') and self.previous.get('inputConfigHash')==self.input_hash:
+            restore_discovered_roster = not self.config['subjects']
             existing={p['id'].lower() for p in self.config['subjects']}
             for p in self.previous.get('subjects',[]):
-                if p.get('autoDiscovered') and p['id'].lower() not in existing:
+                if (restore_discovered_roster or p.get('autoDiscovered')) and p['id'].lower() not in existing:
                     self.config['subjects'].append(p);existing.add(p['id'].lower())
         self.config_hash=digest(self.config)
         if self.previous and self.previous.get('inputConfigHash')!=self.input_hash:
             raise ValueError('Output belongs to a different configuration; use a new output directory')
         self.window=self.config['window'];self.start=instant(self.window['start']);self.end=instant(self.window['endExclusive'])
         self.snapshot=iso(dt.datetime.now(UTC)) if refresh else self.previous.get('snapshotAt',iso(dt.datetime.now(UTC)))
+        # Repository reuse depends on the frozen request, including the window and
+        # snapshot, rather than the contributor roster discovered during collection.
+        self.collection_key = digest({
+            'inputConfigHash': self.input_hash, 'window': self.window, 'snapshotAt': self.snapshot,
+        })
         self.api=API(self.root/'cache',self.config['host'],refresh)
         self.refresh=refresh;self.errors=[];self.discovery_notes=[];self.repo_results=[]
         self.update_aliases()
@@ -354,7 +360,7 @@ class Collector:
         for name in self.config['repos']:
             obj=self.safe('explicit-repository',lambda n=name:self.api.get('repos/'+n),repo=name)
             if obj:repos[obj['full_name']]=obj
-        for org in self.config['orgs']:
+        for org in ([] if self.config['repos'] else self.config['orgs']):
             rows=self.safe('organization-inventory',lambda o=org:self.api.paginate(f'orgs/{o}/repos',{'type':'all'}),[],repo=org)
             for obj in rows:repos[obj['full_name']]=obj
         if not self.config['subjects'] and self.config['orgs']:
@@ -496,7 +502,7 @@ class Collector:
             commits=self.safe('pr-commit-links',lambda n=number:self.api.paginate(f'repos/{name}/pulls/{n}/commits',cap=250),[],repo=name)
             if p.get('commits')is not None and p['commits']>len(commits):
                 self.errors.append({'repo':name,'stage':'pr-commit-links','error':f'PR #{number} reports {p["commits"]} commits but endpoint retained {len(commits)}; Git PR refs provide history separately.'})
-            rec=self.record(name,'pull_request',number,author,p['created_at'],p['title'],p.get('body'),p['html_url'],{'number':number,'createdAt':p['created_at'],'updatedAt':p['updated_at'],'mergedAt':merged,'closedAt':p.get('closed_at'),'state':'MERGED' if merged else str(p.get('state','')).upper(),'draft':p.get('draft',False),'author':self.canonical(author),'mergedBy':self.canonical((p.get('merged_by') or {}).get('login')),'base':base,'head':head,'headSha':(p.get('head') or {}).get('sha'),'baseSha':(p.get('base') or {}).get('sha'),'paths':[f['filename'] for f in files],'additions':p.get('additions'),'deletions':p.get('deletions'),'changedFiles':p.get('changed_files'),'commits':[c['sha'] for c in commits],'labels':[x['name'] for x in p.get('labels',[])],'assignees':[x['login'] for x in p.get('assignees',[])],'milestone':p.get('milestone'),'sourceAccount':author,'inspected':False})
+            rec=self.record(name,'pull_request',number,author,p['created_at'],p['title'],p.get('body'),p['html_url'],{'number':number,'createdAt':p['created_at'],'updatedAt':p['updated_at'],'mergedAt':merged,'closedAt':p.get('closed_at'),'state':'MERGED' if merged else str(p.get('state','')).upper(),'draft':p.get('draft',False),'author':self.canonical(author),'mergedBy':self.canonical((p.get('merged_by') or {}).get('login')),'base':base,'head':head,'headSha':(p.get('head') or {}).get('sha'),'mergeCommitSha':p.get('merge_commit_sha'),'baseSha':(p.get('base') or {}).get('sha'),'paths':[f['filename'] for f in files],'additions':p.get('additions'),'deletions':p.get('deletions'),'changedFiles':p.get('changed_files'),'commits':[c['sha'] for c in commits],'labels':[x['name'] for x in p.get('labels',[])],'assignees':[x['login'] for x in p.get('assignees',[])],'milestone':p.get('milestone'),'sourceAccount':author,'inspected':False})
             records.append(rec)
             reviews=self.safe('pr-reviews',lambda n=number:self.api.paginate(f'repos/{name}/pulls/{n}/reviews'),[],repo=name)
             for rv in reviews:
@@ -546,24 +552,93 @@ class Collector:
         releases=self.safe('releases',lambda:self.api.paginate(f'repos/{name}/releases'),[],repo=name)
         for r in releases:
             date=r.get('published_at') or r['created_at']
-            if self.inside(date):records.append(self.record(name,'release',r['id'],(r.get('author')or{}).get('login'),date,r.get('name') or r.get('tag_name'),r.get('body'),r.get('html_url'),{'tag':r['tag_name'],'publishedAt':r.get('published_at'),'targetSha':r.get('target_commitish'),'draft':r.get('draft'),'prerelease':r.get('prerelease'),'assets':[{'name':x['name'],'size':x['size'],'downloadCount':x['download_count']} for x in r.get('assets',[])],'inspected':False}))
+            if not self.inside(date):
+                continue
+            tag = r['tag_name']
+            mirror = self.root / 'mirrors' / name.replace('/', '__')
+            target = None
+            if mirror.is_dir():
+                try:
+                    target = self.git(mirror, 'rev-parse', '--verify', '--end-of-options', f'refs/tags/{tag}^{{commit}}').strip()
+                except (CommandError, OSError, subprocess.TimeoutExpired):
+                    # A release can still be cited as published when its tag cannot link a change.
+                    pass
+            records.append(self.record(name,'release',r['id'],(r.get('author')or{}).get('login'),date,r.get('name') or r.get('tag_name'),r.get('body'),r.get('html_url'),{'tag':r['tag_name'],'publishedAt':r.get('published_at'),'targetSha':target,'draft':r.get('draft'),'prerelease':r.get('prerelease'),'assets':[{'name':x['name'],'size':x['size'],'downloadCount':x['download_count']} for x in r.get('assets',[])],'inspected':False}))
         params={'created':f'{iso(self.start)}..{iso(self.end-dt.timedelta(microseconds=1))}'}
         runs=self.safe('workflow-runs',lambda:self.api.paginate(f'repos/{name}/actions/runs',params,key='workflow_runs',cap=1000),[],repo=name)
         for r in runs:
             date=r['created_at']
             if self.inside(date):records.append(self.record(name,'workflow',str(r['id'])+':'+str(r.get('run_attempt',1)),(r.get('actor')or{}).get('login'),date,r.get('name'),'',r.get('html_url'),{'headSha':r.get('head_sha'),'targetSha':r.get('head_sha'),'branch':r.get('head_branch'),'event':r.get('event'),'status':r.get('status'),'conclusion':r.get('conclusion'),'startedAt':r.get('run_started_at'),'updatedAt':r.get('updated_at'),'attempt':r.get('run_attempt',1),'inspected':False}))
         deployments=self.safe('deployments',lambda:self.api.paginate(f'repos/{name}/deployments'),[],repo=name)
-        for d in deployments:
-            if not self.inside(d['created_at']):continue
-            statuses=self.safe('deployment-statuses',lambda d=d:self.api.paginate(f'repos/{name}/deployments/{d["id"]}/statuses'),[],repo=name)
-            records.append(self.record(name,'deployment',d['id'],(d.get('creator')or{}).get('login'),d['created_at'],d.get('description') or d.get('environment','Deployment'),'',f'https://{self.config["host"]}/{name}/deployments',{'sha':d.get('sha'),'targetSha':d.get('sha'),'status':statuses[0]['state']if statuses else None,'statusObservedAt':statuses[0]['created_at']if statuses else None,'environment':d.get('environment'),'productionEnvironment':d.get('production_environment'),'statuses':[{'state':s['state'],'createdAt':s['created_at'],'environmentUrl':s.get('environment_url')}for s in statuses],'coverageNote':'Historical deployment statuses may have expired. A deployment record or workflow success alone does not prove production correctness.','inspected':False}))
+        for deployment in deployments:
+            created_at = deployment['created_at']
+            if instant(created_at) >= self.end:
+                continue
+            deployment_id = deployment['id']
+            statuses = self.safe(
+                'deployment-statuses',
+                lambda: self.api.paginate(f'repos/{name}/deployments/{deployment_id}/statuses'),
+                [], repo=name,
+            )
+            in_window = [
+                {'state': status['state'], 'createdAt': status['created_at']}
+                for status in statuses if self.inside(status.get('created_at'))
+            ]
+            if not self.inside(created_at) and not in_window:
+                continue
+            records.append(self.record(
+                name, 'deployment', deployment_id, (deployment.get('creator') or {}).get('login'),
+                created_at, deployment.get('description') or deployment.get('environment') or 'Deployment',
+                '', f'https://{self.config["host"]}/{name}/deployments',
+                {
+                    'sha': deployment.get('sha'), 'targetSha': deployment.get('sha'),
+                    'environment': deployment.get('environment'),
+                    'productionEnvironment': deployment.get('production_environment'),
+                    'statuses': in_window,
+                    'coverageNote': 'Historical deployment statuses may be unavailable.',
+                    'inspected': False,
+                },
+            ))
         return records
 
-    def collect_repo(self, name, metadata):
-        dest=self.root/'repos'/name.replace('/','__');private_dir(dest)
-        marker=read(dest/'coverage.json',{})
-        if marker.get('configHash')==self.config_hash and marker.get('status')=='complete' and (dest/'records.jsonl').exists() and not self.refresh:
+    def repository_dir(self, name):
+        return self.root / 'repos' / name.replace('/', '__')
+
+    def read_checkpoint(self, name):
+        directory = self.repository_dir(name)
+        marker = read(directory / 'coverage.json', {})
+        if (self.refresh or marker.get('status') != 'complete'
+                or marker.get('repo') != name or marker.get('snapshotAt') != self.snapshot
+                or marker.get('window') != self.window or not (directory / 'records.jsonl').is_file()):
+            return None
+        if marker.get('collectionKey') == self.collection_key:
             return marker
+        # Older checkpoints included the growing roster in configHash. A marker
+        # already recorded by this run's manifest can still be reused safely.
+        if 'collectionKey' not in marker:
+            if marker.get('configHash') == self.config_hash:
+                return marker
+            if marker in self.previous.get('coverage', {}).get('repositoryResults', []):
+                return marker
+        return None
+
+    def restore_perspectives(self, marker):
+        name = marker['repo']
+        directory = self.repository_dir(name)
+        with (directory / 'records.jsonl').open(encoding='utf-8') as records_file:
+            records = [json.loads(line) for line in records_file if line.strip()]
+        self.write_perspectives(name, directory, records, marker)
+
+    def collect_repo(self, name, metadata):
+        dest = self.repository_dir(name)
+        private_dir(dest)
+        marker = self.read_checkpoint(name)
+        if marker:
+            self.expand_subjects(name, marker.get('discoveredLogins', []))
+            self.restore_perspectives(marker)
+            return marker
+        prior_subjects = {subject['id'] for subject in self.config['subjects']}
+        (dest / 'coverage.json').unlink(missing_ok=True)
         start_errors=len(self.errors);start_requests=len(self.api.requests);records=[];refs=[];save(dest/'metadata.json',metadata);private_dir(dest/'changes')
         mirrored=self.safe('git-history',lambda:self.mirror(name),repo=name)
         if mirrored:
@@ -602,10 +677,14 @@ class Collector:
         for kind,filename in KINDS.items():save(dest/(filename+'.jsonl'),[r for r in records if r['kind']==kind],True)
         problems=self.errors[start_errors:]
         coverage={'schemaVersion':1,'repo':name,'status':'partial' if problems else 'complete','configHash':self.config_hash,'snapshotAt':self.snapshot,'window':self.window,'recordCounts':dict(collections.Counter(r['kind']for r in records)),'refs':len(refs),'errors':problems,'meaning':'Complete means all requested implemented collection dimensions returned without detected collection errors; it does not prove unavailable/deleted history exists or that source excerpts were inspected.','sourceInspection':'collected, not inspected','bounds':{'sourcePatchExcerpts':self.config['patches'],'prCommitsEndpoint':250,'prFilesEndpoint':3000,'workflowFilteredResults':1000}}
+        coverage['collectionKey'] = self.collection_key
+        coverage['discoveredLogins'] = [
+            subject['login'] for subject in self.config['subjects'] if subject['id'] not in prior_subjects
+        ]
         coverage['unresolvedCommits']=sum(r['kind']=='commit' and r['actor']is None for r in records)
         save(dest/'api-index.json',self.api.requests[start_requests:])
-        save(dest/'coverage.json',coverage)
         self.write_perspectives(name,dest,records,coverage)
+        save(dest/'coverage.json',coverage)
         return coverage
 
     def roles(self, record, pid):
@@ -623,6 +702,8 @@ class Collector:
             if 'pr-author'in roles:
                 dates.extend(v for v in [data.get('mergedAt'),data.get('closedAt')]if self.inside(v))
             if 'merger'in roles and self.inside(data.get('mergedAt')):dates.append(data['mergedAt'])
+        if record['kind'] == 'deployment':
+            dates.extend(status['createdAt'] for status in data.get('statuses', []) if self.inside(status.get('createdAt')))
         if record['kind']=='issue' and 'issue-author'in roles and self.inside(data.get('closedAt')):dates.append(data['closedAt'])
         return list(dict.fromkeys(dates))
 
@@ -649,15 +730,45 @@ class Collector:
 
     def manifest(self, status='collecting'):
         value={'schemaVersion':1,'inputConfigHash':self.input_hash,'configHash':self.config_hash,'snapshotAt':self.snapshot,'window':self.window,'subjects':self.config['subjects'],'host':self.config['host'],'orgs':self.config['orgs'],'repos':[r['repo']for r in self.repo_results],'config':self.config,'toolVersions':getattr(self,'tool_versions',None),'coverage':{'status':status,'complete':status=='complete','notes':self.discovery_notes,'errors':self.errors,'repositoryResults':self.repo_results,'apiRequests':self.api.calls,'cacheHits':self.api.hits,'sourceInspection':'collection only; research agents must log inspections separately','notCollected':['GitHub Discussions and Projects field history','organization audit logs','historical star/fork/follower snapshots','expired Actions logs/artifacts','deleted or unreachable Git objects not retained by fetched references'],'generatedAt':iso(dt.datetime.now(UTC))}}
-        for subject in self.config['subjects']:
-            folder=self.root/'users'/subject['id'];private_dir(folder)
-            indexes=sorted(str(p.relative_to(self.root))for p in (folder/'repos').glob('*/index.json'))
-            save(folder/'index.json',{'schemaVersion':1,'subject':subject,'window':self.window,'repositoryIndexes':indexes,'coverage':status})
+        self.write_subject_indexes(self.config['subjects'], value['repos'], status)
         save(self.root/'manifest.json',value)
         return value
 
+    def write_subject_indexes(self, subjects, repositories, status):
+        allowed = {name.replace('/', '__') for name in repositories}
+        for subject in subjects:
+            folder = self.root / 'users' / subject['id']
+            private_dir(folder)
+            indexes = sorted(
+                str(path.relative_to(self.root)) for path in (folder / 'repos').glob('*/index.json')
+                if path.parent.name in allowed
+            )
+            save(folder / 'index.json', {'schemaVersion': 1, 'subject': subject, 'window': self.window,
+                                         'repositoryIndexes': indexes, 'coverage': status})
+
+    def replay_completed_run(self):
+        coverage = self.previous.get('coverage', {})
+        if self.refresh or coverage.get('status') not in {'complete', 'partial'} or coverage.get('errors'):
+            return None
+        repositories = self.previous['repos']
+        markers = [self.read_checkpoint(name) for name in repositories]
+        if markers != coverage.get('repositoryResults') or any(marker is None for marker in markers):
+            return None
+        # Repair derived indexes from saved records without changing the frozen
+        # manifest, whose exact bytes are bound by facts and approval seals.
+        self.config['subjects'] = self.previous['subjects']
+        self.update_aliases()
+        for marker in markers:
+            self.restore_perspectives(marker)
+        self.write_subject_indexes(self.config['subjects'], repositories, coverage['status'])
+        return self.previous
+
     def run(self):
+        completed = self.replay_completed_run()
+        if completed is not None:
+            return completed
         repos=self.discover();self.config_hash=digest(self.config);self.manifest()
+        initial_subject_count = len(self.config['subjects'])
         for name in sorted(repos,key=str.lower):
             result=self.collect_repo(name,repos[name]);self.repo_results.append(result)
             self.manifest()
@@ -665,6 +776,10 @@ class Collector:
         status='partial'if self.errors or any(r['status']!='complete'for r in self.repo_results)else'complete'
         # Unscoped discovery is explicitly best-effort even when each known repository is complete.
         if not(self.config['orgs']or self.config['repos']):status='partial'
+        if len(self.config['subjects']) > initial_subject_count:
+            # A repository may discover a person after earlier indexes were written.
+            for marker in self.repo_results:
+                self.restore_perspectives(marker)
         final=self.manifest(status)
         save(self.root/'coverage.json',final['coverage'])
         save(self.root/'api-pages.json',self.api.pages)

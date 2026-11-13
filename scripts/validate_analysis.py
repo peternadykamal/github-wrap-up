@@ -3,6 +3,7 @@
 import argparse, datetime as dt, decimal, hashlib, json, math, re, sys
 from pathlib import Path
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 from build_facts import load,digest,save,instant,rows
 from research_mode import validate_mode
 
@@ -51,8 +52,69 @@ def candidates(run):
    check(c.get('id')not in found,'Duplicate candidate ID');found[c['id']]=c
  return found
 
+def inspection_digest(run):
+    """Fingerprint the exact files consulted by the inspection gate."""
+    log = run / 'analysis/inspection/read-log.jsonl'
+    paths = {
+        log,
+        *(run / 'analysis/people').glob('*/insight-candidates.json'),
+        *(run / 'analysis/team').glob('insight-candidates.json'),
+        *(run / 'analysis/calculations').glob('*.json'),
+    }
+    if log.is_file():
+        for entry in rows(log):
+            location = entry.get('location', '')
+            if location and not location.startswith('https://'):
+                paths.add(run / location)
+    items = []
+    for path in sorted(paths):
+        check(path.resolve().is_relative_to(run), 'Inspection input is outside the run')
+        items.append((str(path.relative_to(run)), digest(path) if path.is_file() else None))
+    return hashlib.sha256(json.dumps(items, separators=(',', ':')).encode()).hexdigest()
+
+
+def source_date_matches(value, source_date, timezone):
+    event = instant(source_date)
+    if not event:
+        return False
+    if re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+        return value == event.astimezone(ZoneInfo(timezone)).date().isoformat()
+    return instant(value) == event
+
+
+def artifact_hashes(record):
+    data = record['data']
+    values = []
+    if record['kind'] == 'commit':
+        values = [data.get('sha')]
+    elif record['kind'] == 'pull_request':
+        values = [data.get('mergeCommitSha'), data.get('headSha'), *data.get('commits', [])]
+    return {value.lower() for value in values if isinstance(value, str) and re.fullmatch(r'[0-9a-fA-F]{40,64}', value)}
+
+
+def release_dates(record):
+    data = record['data']
+    if record['kind'] == 'release' and data.get('draft') is False:
+        return [data.get('publishedAt')]
+    if record['kind'] == 'deployment':
+        return [status.get('createdAt') for status in data.get('statuses', []) if status.get('state') == 'success']
+    return []
+
+
+def validate_beats(chapter):
+    evidence = chapter['evidence']
+    for beat in chapter['beats']:
+        if 'sourceId' in beat:
+            check(any(item['id'] == beat['sourceId'] for item in evidence), 'Beat source must be cited by its chapter')
+        if 'url' in beat:
+            check(any(item['url'] == beat['url'] and beat.get('sourceId', item['id']) == item['id'] for item in evidence),
+                  'Beat URL must match canonical chapter evidence')
+
+
 def validate(run,presentation,seal=False):
  run=Path(run).resolve();presentation=Path(presentation).resolve();manifest=load(run/'manifest.json');facts=load(run/'analysis/facts.json');data=load(presentation);dp=run/'analysis/inspection/decisions.json';judge=load(dp);shape(data)
+ collection_status = 'complete' if facts.get('coverage', {}).get('complete') is True else 'partial'
+ check(data['coverage'].get('status', collection_status) == collection_status, 'Coverage status disagrees with collected facts')
  check(facts['sourceManifestSha256']==digest(run/'manifest.json'),'Facts are stale: rebuild after manifest changes')
  check(judge.get('factCheck')=='passed'and judge.get('editorialCheck')=='passed','Both factual and editorial inspector reviews must pass')
  check(judge.get('reviewedBy')and judge.get('notes'),'Inspector identity and substantive notes are required')
@@ -62,7 +124,11 @@ def validate(run,presentation,seal=False):
  if mode_path.exists():
   check(ledger_path.is_file(),'Research usage ledger is missing');hashes.update(researchPlanSha256=digest(mode_path),researchLedgerSha256=digest(ledger_path))
  else:check(judge.get('status')=='approved','New inspections require a research mode plan; Medium is the default')
+ hashes['inspectionInputsSha256'] = inspection_digest(run)
  if judge.get('status')=='approved':
+  if 'inspectionInputsSha256' not in judge:
+   check(not seal, 'Legacy approval needs renewed inspection before resealing')
+   hashes.pop('inspectionInputsSha256')
   check(all(judge.get(k)==v for k,v in hashes.items()),'Approved material changed; renew inspection before resealing')
  source=facts['sourceIndex'];people={s['id']for s in manifest['subjects']};allowed=people|{'team'};host=manifest.get('host','github.com')
  def refs(refs):
@@ -115,11 +181,12 @@ def validate(run,presentation,seal=False):
  check({p.get('id')for p in data.get('people',[])}==people,'Presentation subject set differs from research');check(meta.get('totals')==facts['totals'],'Presentation totals must copy facts.totals');check(data.get('activity')==facts['activity'],'Presentation activity must copy facts.activity, including deduplicated team rows');check(data.get('coverage',{}).get('summary')and data['coverage'].get('limitations'),'Presentation needs actual coverage and limitations')
  timeline=data.get('timeline',[]);seen=set()
  for t in timeline:
-  check(t.get('id')and t['id']not in seen,'Duplicate or missing timeline ID');seen.add(t['id']);check(t.get('candidateId')in accepted,'Timeline uses an unaccepted candidate');check(t.get('title')and t.get('summary'),'Timeline needs a substantive summary');check(t.get('people')and set(t['people'])<=people,'Timeline contains unknown people');check(t.get('contributionRole')in ['author','coauthor','pr-author','issue-author','reviewer','discussion','integrator','mixed'],'Timeline contribution role is required');ev=refs(t.get('evidence'));check(t.get('stage')in ['implemented','design','merged','released','unknown'],'Invalid development stage');date=instant(t.get('date'));check(date and instant(window['start'])<=date<instant(window['endExclusive']),'Timeline date outside scope')
+  check(t.get('id')and t['id']not in seen,'Duplicate or missing timeline ID');seen.add(t['id']);check(t.get('candidateId')in accepted,'Timeline uses an unaccepted candidate');check(t.get('title')and t.get('summary'),'Timeline needs a substantive summary');check(t.get('people')and set(t['people'])<=people,'Timeline contains unknown people');check(t.get('contributionRole')in ['author','coauthor','pr-author','issue-author','reviewer','discussion','integrator','mixed'],'Timeline contribution role is required');ev=refs(t.get('evidence'));check(t.get('stage')in ['implemented','design','merged','released','unknown'],'Invalid development stage');check(instant(t['date']), 'Invalid timeline date')
   check(ev<=set(e['id']for e in allc[t['candidateId']]['evidence']),'Timeline support differs from accepted candidate')
   role=t['contributionRole']
-  for pid in t['people']:
-   def supports(i):
+  local_sources = {i for i in ev if source[i]['repo'] == t['repo']}
+  check(local_sources, 'Timeline repository does not match its evidence')
+  def supports(i, pid):
     r=source[i];d=r['data']
     if role=='author':return r['kind']=='commit'and r['actor']==pid
     if role=='pr-author':return r['kind']=='pull_request'and d.get('author',r['actor'])==pid
@@ -129,16 +196,35 @@ def validate(run,presentation,seal=False):
     if role=='discussion':return r['kind']in ['comment','issue','timeline']and r['actor']==pid
     if role=='integrator':return r['kind']=='pull_request'and d.get('mergedBy')==pid
     return pid in involved(i)
-   check(any(supports(i)for i in ev),'Timeline evidence does not support the credited person and contribution role')
-  if t['stage']in ['implemented','design']:check(any(readings.get(i,set())&{'diff','historical_source'}for i in ev),'Substantive implementation/design claim lacks source inspection')
-  if t['stage']=='merged':check(any(source[i]['kind']=='pull_request'and source[i]['repo']==t['repo']and instant(source[i]['data'].get('mergedAt'))and instant(window['start'])<=instant(source[i]['data']['mergedAt'])<instant(window['endExclusive'])for i in ev),'Merged stage lacks a matching in-window PR merge record')
-  if t['stage']=='released':
-   def published(i):
-    r=source[i];d=r['data'];date=instant(d.get('publishedAt')if r['kind']=='release'else r['occurredAt'])
-    if r['repo']!=t['repo']or not date or not(instant(window['start'])<=date<instant(window['endExclusive'])):return False
-    if r['kind']=='release':return d.get('draft')is False and bool(d.get('publishedAt'))
-    return r['kind']=='deployment'and any(d.get(k)=='success'for k in ['state','status','conclusion'])
-   check(any(published(i)for i in ev),'Released stage lacks matching published non-draft release/deployment evidence')
+  for pid in t['people']:
+   check(any(supports(i, pid) for i in local_sources), 'Timeline evidence does not support the credited person and contribution role')
+  credited_sources = {i for i in local_sources if any(supports(i, pid) for pid in t['people'])}
+  artifacts = set().union(*(artifact_hashes(source[i]) for i in credited_sources))
+  stage = t['stage']
+  if stage in ['implemented','design']:
+   check(any(readings.get(i,set())&{'diff','historical_source'} for i in credited_sources),
+         'Substantive implementation/design claim lacks source inspection')
+  def matches(event):
+   stamp = instant(event)
+   return bool(stamp and instant(window['start']) <= stamp < instant(window['endExclusive'])
+               and source_date_matches(t['date'], event, window['timezone']))
+  if stage == 'merged':
+   check(any(source[i]['kind'] == 'pull_request'
+             and (i in credited_sources or artifact_hashes(source[i]) & artifacts)
+             and matches(source[i]['data'].get('mergedAt')) for i in local_sources),
+         'Merged stage lacks a matching in-window PR merge record and date')
+  elif stage == 'released':
+   linked_release = any(
+       isinstance(source[i]['data'].get('targetSha'), str)
+       and source[i]['data']['targetSha'].lower() in artifacts
+       and any(matches(event) for event in release_dates(source[i]))
+       for i in local_sources
+   )
+   check(linked_release, 'Released stage lacks matching published non-draft release/deployment evidence for the credited artifact and date')
+  else:
+   event_key = 'mergedAt' if role == 'integrator' else None
+   check(any(matches(source[i]['data'].get(event_key) if event_key else source[i]['occurredAt']) for i in credited_sources),
+         'Timeline date does not match a cited event in this repository')
  stories=data.get('stories',[]);check({s.get('personId')for s in stories}==allowed,'Need a distinct story for every person and the team');check(len(stories)==len(allowed),'Duplicate story subject')
  chapter_ids=set()
  for story in stories:
@@ -148,6 +234,7 @@ def validate(run,presentation,seal=False):
   availability=story.get('availability')
   if availability:check(empty and availability in ['no-observed-activity','unavailable'],'Coverage-only story is not supported by observed facts')
   for ch in story['chapters']:
+   validate_beats(ch)
    if availability:
     check(ch.get('id')and ch['id']not in chapter_ids,'Duplicate coverage chapter ID');chapter_ids.add(ch['id']);check(ch.get('title')and ch.get('body')and not ch.get('evidence')and not ch.get('insightIds'),'Coverage-only chapters must state availability without fabricated insight/source links')
     for m in ch.get('metrics',[]):metric(m)
@@ -161,6 +248,10 @@ def validate(run,presentation,seal=False):
  check(not re.search(r'(gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]+|AIza[A-Za-z0-9_-]{25,}|BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|sk-[A-Za-z0-9_-]{20,})',text),'Recognizable credentials remain in presentation')
  check(not re.search(r'(?i)(?:password|client.?secret|api.?key|access.?token)\s*[\\"\x27]*\s*[:=]\s*[\\"\x27]+[A-Za-z0-9_+/=-]{8,}',text),'Credential-like assignment remains in presentation')
  if seal:
+  if 'status' not in data['coverage']:
+   data['coverage']['status'] = collection_status
+   save(presentation, data)
+   hashes['presentationSha256'] = digest(presentation)
   judge.update(researchMode=mode_usage['mode']if mode_usage else 'legacy-unmetered',researchUsage=mode_usage)
   judge.update(status='approved',**hashes,approvedAt=dt.datetime.now(dt.timezone.utc).isoformat());save(dp,judge)
  return {'passed':True,'sealed':seal,'acceptedInsights':len(accepted),'timelineEntries':len(timeline),'stories':len(stories),'chapters':len(chapter_ids),'researchMode':mode_usage['mode']if mode_usage else 'legacy-unmetered',**hashes}

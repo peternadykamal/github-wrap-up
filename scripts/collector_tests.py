@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import build_facts
+
 spec=importlib.util.spec_from_file_location('collect',Path(__file__).with_name('collect.py'))
 c=importlib.util.module_from_spec(spec);spec.loader.exec_module(c)
 
@@ -167,6 +169,37 @@ class TestCollector(unittest.TestCase):
             self.assertEqual(co.enrich_identities('sample/product',[{'sha':'a'*40}]),{})
             self.assertEqual(co.errors[0]['stage'],'missing-commit-account-objects')
 
+    def test_explicit_repositories_limit_organization_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            collector = c.Collector(cfg(orgs=['sample'], repos=['sample/product']), Path(directory))
+            collector.api.get = lambda endpoint: {'full_name': 'sample/product'} if endpoint.startswith('repos/') else {}
+            def unexpected_inventory(*args, **kwargs):
+                self.fail('An explicit repository should prevent organization-wide discovery')
+            collector.api.paginate = unexpected_inventory
+            self.assertEqual(set(collector.discover()), {'sample/product'})
+
+    def test_deployment_retains_status_events_inside_the_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            collector = c.Collector(cfg(), Path(directory))
+            fixtures = {
+                'deployments': [
+                    {'id': 1, 'created_at': '2025-12-31T10:00:00Z', 'sha': 'a' * 40},
+                    {'id': 2, 'created_at': '2026-02-01T10:00:00Z', 'sha': 'b' * 40},
+                ],
+                'deployments/1/statuses': [
+                    {'state': 'inactive', 'created_at': '2026-06-01T10:00:00Z'},
+                    {'state': 'success', 'created_at': '2026-01-02T10:00:00Z'},
+                ],
+                'deployments/2/statuses': [
+                    {'state': 'success', 'created_at': '2027-01-01T10:00:00Z'},
+                ],
+            }
+            collector.api.paginate = lambda endpoint, *args, **kwargs: fixtures.get(endpoint.removeprefix('repos/sample/product/'), [])
+            first, second = collector.optional_metadata('sample/product')
+            self.assertEqual(first['occurredAt'], '2025-12-31T10:00:00Z')
+            self.assertEqual([status['state'] for status in first['data']['statuses']], ['inactive', 'success'])
+            self.assertEqual(second['data']['statuses'], [])
+
     def test_full_fixture_collection_and_resume(self):
         with tempfile.TemporaryDirectory()as root:
             root=Path(root);repo=root/'git';repo.mkdir()
@@ -194,9 +227,87 @@ class TestCollector(unittest.TestCase):
             self.assertEqual(commit['data']['paths'],['sample.txt'])
             self.assertEqual(commit['data']['additions'],1)
             self.assertFalse(commit['data']['inspected'])
-            resumed=Fixture(data,out)
-            resumed.mirror=lambda name:(_ for _ in ()).throw(AssertionError('Completed mirror should not run'))
-            self.assertTrue(resumed.run()['coverage']['complete'])
+            build_facts.build(out)
+            before = (out / 'manifest.json').read_bytes()
+            index = out / 'users/Alice/repos/sample__product/index.json'
+            index.unlink()
+            resumed = Fixture(data, out)
+            with patch.object(resumed, 'discover', side_effect=AssertionError('Rediscovered completed scope')), \
+                 patch.object(resumed, 'mirror', side_effect=AssertionError('Refetched completed mirror')):
+                self.assertTrue(resumed.run()['coverage']['complete'])
+            self.assertTrue(index.is_file())
+            self.assertEqual((out / 'manifest.json').read_bytes(), before)
+            facts = build_facts.load(out / 'analysis/facts.json')
+            self.assertEqual(facts['sourceManifestSha256'], build_facts.digest(out / 'manifest.json'))
+
+    def test_organization_resume_reuses_checkpoints_after_roster_expands(self):
+        class Fixture(c.Collector):
+            def discover(self):
+                return {f'sample/{repo}': {'full_name': f'sample/{repo}'} for repo in ['a', 'b', 'c']}
+
+            def mirror(self, name):
+                self.mirrors.append(name)
+                return None
+
+            def pull_requests(self, name):
+                login = {'sample/a': 'Bob', 'sample/b': 'Carl', 'sample/c': 'Dana'}[name]
+                return [self.record(name, 'pull_request', 1, login, '2026-07-01T00:00:00Z')]
+
+            def issues(self, name):
+                return []
+
+            def optional_metadata(self, name):
+                return []
+
+        data = cfg(repos=[], orgs=['sample'], expandOrganizationContributors=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = Fixture(data, root)
+            first.mirrors = []
+            original = first.collect_repo
+
+            def interrupt_after_checkpoint(name, metadata):
+                original(name, metadata)
+                raise InterruptedError('Stopped before the checkpoint reached the manifest')
+
+            with patch.object(first, 'collect_repo', side_effect=interrupt_after_checkpoint):
+                with self.assertRaises(InterruptedError):
+                    first.run()
+            self.assertEqual(first.mirrors, ['sample/a'])
+
+            resumed = Fixture(data, root)
+            resumed.mirrors = []
+            result = resumed.run()
+            self.assertTrue(result['coverage']['complete'])
+            self.assertEqual(resumed.mirrors, ['sample/b', 'sample/c'])
+            self.assertEqual([person['id'] for person in result['subjects']], ['Alice', 'Bob', 'Carl', 'Dana'])
+            self.assertTrue((root / 'users/Bob/repos/sample__a/index.json').is_file())
+
+            before = (root / 'manifest.json').read_bytes()
+            replay = Fixture(data, root)
+            replay.mirrors = []
+            replay.run()
+            self.assertEqual(replay.mirrors, [])
+            self.assertEqual((root / 'manifest.json').read_bytes(), before)
+
+            # Previous versions used a different config hash for each roster revision.
+            for marker in result['coverage']['repositoryResults']:
+                del marker['collectionKey']
+                del marker['discoveredLogins']
+                c.save(resumed.repository_dir(marker['repo']) / 'coverage.json', marker)
+            c.save(root / 'manifest.json', result)
+            before = (root / 'manifest.json').read_bytes()
+
+            replay = Fixture(data, root)
+            with patch.object(replay, 'discover', side_effect=AssertionError('Rediscovered completed scope')), \
+                 patch.object(replay, 'mirror', side_effect=AssertionError('Refetched completed mirror')):
+                replay.run()
+            self.assertEqual((root / 'manifest.json').read_bytes(), before)
+
+            refreshed = Fixture(data, root, refresh=True)
+            refreshed.mirrors = []
+            refreshed.run()
+            self.assertEqual(refreshed.mirrors, ['sample/a', 'sample/b', 'sample/c'])
 
     def test_patch_redaction_and_sensitive_paths(self):
         secret='ghp_'+'a'*35

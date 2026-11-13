@@ -40,13 +40,13 @@ Other decisions: rewrite, combine, reject, needs-evidence. Finalized rewrites/co
 
 Authoritative UI types: assets/frontend/src/types.ts. Data includes meta, people, timeline, stories, activity, coverage. See presentation.md. Additional research fields below are ignored by the UI but required by validation:
 
-- Timeline: candidateId (accepted), contributionRole author/coauthor/pr-author/issue-author/reviewer/discussion/integrator/mixed. stage implemented/design/merged/released/unknown. Implemented/design claims need an actual diff or historical-source reading. Merged/released claims require matching source state.
-- Each chapter: insightIds array of accepted candidates; evidence uses real sourceIndex IDs/URLs. Cover/finale can reference multiple accepted candidates. No fixed chapter count.
+- Timeline: candidateId (accepted), contributionRole author/coauthor/pr-author/issue-author/reviewer/discussion/integrator/mixed. stage implemented/design/merged/released/unknown. Implemented/design claims need an actual diff or historical-source reading. Match the repository and date to a relevant cited event. A date-only value uses the reporting timezone. Use the merge event for merged rows. A released row needs a cited published release or successful deployment status, its actual event date, and a target SHA linked to the credited work.
+- Each chapter: insightIds array of accepted candidates; evidence uses real sourceIndex IDs/URLs. Cover/finale can reference multiple accepted candidates. For chapter beats with links, include a sourceId from the chapter’s evidence. Existing beat URLs must match chapter evidence. No fixed chapter count.
 - Each metric: value, label, basis, provenance {factPath:"people.<login>.totals.commits"} OR {calculationId:"..."}. Values match exact facts/results; use unrounded strings with optional thousands separators.
 - meta.totals copies facts.totals for people and team; activity copies facts.activity, including explicit team rows. Do not reconstruct team by summing people.
 - Source excerpts must already be redacted; never export raw identity emails, cache, credentials or repo configuration secrets. URLs must match canonical source URLs. Missing totals show unknown, not fabricated zero.
 
-The validator checks shape, reference integrity, metrics, reading support, privacy and hashes. It cannot certify all prose; factual and editorial judgment remain essential, with review passes determined by the selected mode.
+The validator checks shape, reference integrity, metrics, reading support, privacy and hashes. New approval seals cover the read log, candidates, calculations and local reading files. Older approvals receive full validation before scaffolding. Renew inspection before resealing an older approval. It cannot certify all prose; factual and editorial judgment remain essential, with review passes determined by the selected mode.
 
 People with no recovered contributions may have a short coverage-only story with availability "no-observed-activity" or "unavailable". All observed contribution counters, including coauthoredCommits, must be zero. Its chapters state availability/coverage and have empty evidence and insightIds; no invented candidate is required. Coverage-only stories still use complete UI fields (kicker, metrics, beats, evidence arrays). meta.coverageNotes is always an array.
 

@@ -43,6 +43,12 @@ class FactsTests(unittest.TestCase):
   _,f,_,_,_=fixture(self.root);self.assertEqual(f['totals']['alice']['commits'],1);self.assertEqual(f['totals']['team']['commits'],2);self.assertEqual(f['people']['alice']['repositoryCommitMemberships'],{'demo/one':1,'demo/two':1});self.assertEqual(f['people']['alice']['changedPathCategories']['tests'],1);self.assertFalse(f['people']['alice']['timeInterpretationAllowed'])
  def test_old_pr_current_review_and_merge(self):
   _,f,_,_,_=fixture(self.root);self.assertEqual(f['totals']['team']['prs'],0);self.assertEqual(f['totals']['bob']['mergedAuthoredPRs'],1);self.assertEqual(f['totals']['alice']['mergedAuthoredPRs'],0);self.assertEqual(f['totals']['alice']['reviews'],1);self.assertEqual(f['totals']['alice']['integrations'],1);self.assertEqual(f['reviewInteractions'][0]['author'],'bob')
+ def test_manifest_excludes_stale_repository_files(self):
+  manifest, _, _, _, _ = fixture(self.root)
+  manifest['repos'] = ['demo/one']
+  facts.save(self.root / 'manifest.json', manifest)
+  result = facts.build(self.root)
+  self.assertEqual({record['repo'] for record in result['sourceIndex'].values()}, {'demo/one'})
  def test_committed_basis(self):
   m,*_=fixture(self.root);m['window']['dateBasis']='committed';facts.save(self.root/'manifest.json',m);f=facts.build(self.root);self.assertEqual(f['totals']['alice']['commits'],0);self.assertEqual(f['totals']['team']['commits'],1)
  def test_conflicting_sha_authors(self):
@@ -96,6 +102,101 @@ class GateTests(unittest.TestCase):
  def test_wrong_evidence_url_rejected(self):
   self.data['stories'][0]['chapters'][0]['evidence'][0]['url']='https://github.com/demo/other/commit/'+('a'*40);self.mutate()
   with self.assertRaisesRegex(gate.Invalid,'mismatch'):gate.validate(self.root,self.pres)
+ def test_milestone_date_and_repository_match_evidence(self):
+  milestone = self.data['timeline'][0]
+  original = copy.deepcopy(milestone)
+  for field, value, error in [
+      ('repo', 'demo/two', 'repository'),
+      ('date', '2026-01-29T00:00:00Z', 'Timeline date'),
+  ]:
+   with self.subTest(field=field):
+    milestone.update(original)
+    milestone[field] = value
+    self.mutate()
+    with self.assertRaisesRegex(gate.Invalid, error):
+     gate.validate(self.root, self.pres)
+
+ def test_in_window_local_date_can_precede_start_in_utc(self):
+  manifest_path = self.root / 'manifest.json'
+  manifest = facts.load(manifest_path)
+  manifest['window'].update(start='2026-01-12T09:00:00Z', timezone='Pacific/Auckland')
+  facts.save(manifest_path, manifest)
+  updated = facts.build(self.root)
+  plan_path = self.root / 'analysis/research-plan.json'
+  plan = facts.load(plan_path)
+  plan.update(factsSha256=facts.digest(self.root / 'analysis/facts.json'), sourceManifestSha256=facts.digest(manifest_path))
+  facts.save(plan_path, plan)
+  self.data['meta'].update(start=manifest['window']['start'], timezone=manifest['window']['timezone'], totals=updated['totals'])
+  self.data['activity'] = updated['activity']
+  self.data['timeline'][0]['date'] = '2026-01-12'
+  for path in self.root.glob('analysis/**/insight-candidates.json'):
+   candidates = facts.load(path)
+   candidates[0]['period']['start'] = manifest['window']['start']
+   facts.save(path, candidates)
+  self.mutate()
+  self.assertTrue(gate.validate(self.root, self.pres)['passed'])
+
+ def test_unbound_beat_url_is_rejected(self):
+  chapter = self.data['stories'][0]['chapters'][0]
+  chapter['beats'] = [{'title': 'Change', 'body': 'Source', 'url': 'https://example.com/unrelated'}]
+  self.mutate()
+  with self.assertRaisesRegex(gate.Invalid, 'Beat URL'):
+   gate.validate(self.root, self.pres)
+  chapter['beats'][0] = {'title': 'Change', 'body': 'Source', 'sourceId': chapter['evidence'][0]['id']}
+  self.mutate()
+  self.assertTrue(gate.validate(self.root, self.pres)['passed'])
+
+ def test_seal_rechecks_required_inspection_files(self):
+  from create_presentation import create
+  gate.validate(self.root, self.pres, True)
+  decisions = self.root / 'analysis/inspection/decisions.json'
+  log = self.root / 'analysis/inspection/read-log.jsonl'
+  log.unlink()
+  with self.assertRaisesRegex(ValueError, 'Inspection inputs changed'):
+   create(self.pres, decisions, self.root / 'app')
+
+ def test_release_requires_the_credited_artifact_and_success_date(self):
+  milestone = self.data['timeline'][0]
+  release = {
+      'id': 'github.com/demo/one#deployment:7', 'repo': 'demo/one', 'kind': 'deployment',
+      'actor': 'alice', 'occurredAt': '2025-12-31T00:00:00Z',
+      'title': 'Deploy', 'url': 'https://github.com/demo/one/deployments',
+      'data': {'environment': 'staging', 'targetSha': 'b' * 40,
+               'statuses': [{'state': 'success', 'createdAt': '2026-01-20T10:00:00Z'}]},
+  }
+  evidence = {key: release[key] for key in ['id', 'url']}
+  evidence['label'] = release['title']
+  milestone.update(stage='released', date='2026-01-20T10:00:00Z')
+  milestone['evidence'].append(evidence)
+  candidates_path = self.root / 'analysis/people/alice/insight-candidates.json'
+  candidates = facts.load(candidates_path)
+  candidates[0]['evidence'].append(evidence)
+  facts.save(candidates_path, candidates)
+  records_path = self.root / 'repos/demo__one/records.jsonl'
+  records = list(facts.rows(records_path))
+  for sha, date, accepted in [
+      ('b' * 40, '2026-01-20T10:00:00Z', False),
+      ('a' * 40, '2026-02-01T10:00:00Z', False),
+      ('a' * 40, '2026-01-20T10:00:00Z', True),
+  ]:
+   with self.subTest(sha=sha, date=date):
+    release['data']['targetSha'] = sha
+    release['data']['statuses'][0]['createdAt'] = date
+    records_path.write_text(''.join(json.dumps(record) + '\n' for record in [*records, release]))
+    updated = facts.build(self.root)
+    plan_path = self.root / 'analysis/research-plan.json'
+    plan = facts.load(plan_path)
+    plan['factsSha256'] = facts.digest(self.root / 'analysis/facts.json')
+    facts.save(plan_path, plan)
+    self.data['meta']['totals'] = updated['totals']
+    self.data['activity'] = updated['activity']
+    self.mutate()
+    if accepted:
+     self.assertTrue(gate.validate(self.root, self.pres)['passed'])
+    else:
+     with self.assertRaisesRegex(gate.Invalid, 'Released stage'):
+      gate.validate(self.root, self.pres)
+
  def test_manifest_changed_requires_new_facts(self):
   m=facts.load(self.root/'manifest.json');m['coverage']['status']='partial';facts.save(self.root/'manifest.json',m)
   with self.assertRaisesRegex(gate.Invalid,'stale'):gate.validate(self.root,self.pres)

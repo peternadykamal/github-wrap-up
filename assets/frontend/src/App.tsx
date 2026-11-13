@@ -1,61 +1,390 @@
-import {useEffect,useMemo,useRef,useState} from "react";
-import {ArrowRight,ArrowUpRight,ArrowLeft,BookOpen,CalendarDays,Check,ChevronDown,Download,GitCommitHorizontal,GitPullRequest,Layers3,Play,Search,ShieldCheck,Sparkles,Users,X} from "lucide-react";
-import {Area,AreaChart,CartesianGrid,ResponsiveContainer,Tooltip,XAxis,YAxis} from "recharts";
-import raw from "./data.json";
-import type {Chapter,Evidence,Milestone,Person,Presentation,Story} from "./types";
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Activity as ActivityIcon, ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BookOpen,
+  CalendarDays, ChevronDown, Download,
+  Search, ShieldCheck, Users, X } from 'lucide-react';
+import raw from './data.json';
+import type { Beat, Chapter, Evidence, Milestone, Person, Presentation, Story } from './types';
 
-const data=raw as Presentation;
-const number=(value:number|undefined)=>value===undefined?"—":new Intl.NumberFormat("en").format(value);
-const safeUrl=(url:string)=>{try{const u=new URL(url);return u.protocol==='https:'||u.protocol==='http:'?u.href:undefined}catch{return undefined}};
-const monthLabel=(key:string)=>new Date(key+'-15T12:00:00Z').toLocaleDateString('en',{month:'long',year:'numeric',timeZone:'UTC'});
-const dateKey=(value:string)=>value.length===10?value:new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit',timeZone:data.meta.timezone}).format(new Date(value));
-const reportYear=data.meta.start?dateKey(data.meta.start).slice(0,4):'YEAR';
-function download(name:string,content:string){const url=URL.createObjectURL(new Blob([content],{type:'text/markdown;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500)}
-function storyMarkdown(story:Story){return '# '+story.title+'\n\n'+story.thesis+'\n\n'+story.chapters.map(c=>'## '+c.title+'\n\n'+c.body+'\n\n'+(c.insight?'Interpretation: '+c.insight+'\n\n':'')+c.metrics.map(m=>'- '+m.value+' '+m.label+'. Basis: '+m.basis).join('\n')+'\n\n'+c.beats.map(b=>'### '+b.title+'\n\n'+b.body+(b.url&&safeUrl(b.url)?'\n\n[Source]('+b.url+')':'')).join('\n\n')+'\n\n'+c.evidence.filter(e=>safeUrl(e.url)).map(e=>'['+e.label+']('+e.url+')').join(' · ')).join('\n\n')+'\n\n## Coverage\n\n'+data.coverage.summary+'\n\n'+data.coverage.limitations.join('\n\n')}
-function Avatar({person}:{person?:Person}){return <span className="avatar"style={{background:person?.color||'#d4ed68'}}>{person?person.name.split(/\s+/).slice(0,2).map(w=>w[0]).join(''):<Users size={15}/>}</span>}
-function Source({e}:{e:Evidence}){const url=safeUrl(e.url);return <div className="source"><div><span>{e.id}</span>{url?<a href={url}target="_blank"rel="noreferrer">{e.label}<ArrowUpRight size={14}/></a>:<strong>{e.label}</strong>}</div>{e.excerpt&&<details><summary>Inspected source excerpt</summary><pre>{e.excerpt}</pre></details>}</div>}
-function useModal(close:()=>void){const ref=useRef<HTMLDivElement>(null);useEffect(()=>{const prior=document.activeElement as HTMLElement;const overflow=document.body.style.overflow;document.body.style.overflow='hidden';ref.current?.querySelector<HTMLElement>('button')?.focus();function key(e:KeyboardEvent){if(e.key==='Escape')close();if(e.key==='Tab'){const els=Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],select,input,[tabindex="0"]')||[]);if(e.shiftKey&&document.activeElement===els[0]){e.preventDefault();els.at(-1)?.focus()}else if(!e.shiftKey&&document.activeElement===els.at(-1)){e.preventDefault();els[0]?.focus()}}}window.addEventListener('keydown',key);return()=>{document.body.style.overflow=overflow;window.removeEventListener('keydown',key);prior?.focus()}},[]);return ref}
-function EvidenceDrawer({item,close}:{item:Milestone;close:()=>void}){const ref=useModal(close);return <div className="drawer-backdrop"onClick={close}><div className="evidence-drawer"role="dialog"aria-modal="true"aria-label="Milestone evidence"ref={ref}onClick={e=>e.stopPropagation()}><header><span><BookOpen size={15}/>THE SOURCE RECORD</span><button className="icon-button"aria-label="Close milestone evidence"onClick={close}><X size={22}/></button></header><div className="drawer-body"><span className="kicker">{item.repo} / {dateKey(item.date)}</span><h2>{item.title}</h2><p>{item.summary}</p><div className="stage-line"><span className={'stage '+item.stage}>{item.stage==='design'?'Design only':item.stage}</span><span>State describes the supporting evidence.</span></div>{item.caveat&&<aside className="caveat">{item.caveat}</aside>}<h3>Follow the evidence</h3>{item.evidence.map(e=><Source e={e}key={e.id}/>)}{!item.evidence.length&&<p>No inspectable source links were supplied for this milestone.</p>}<p className="small-print">Source access follows your existing repository permissions. Patch excerpts are bounded, sanitized selections; collection does not imply execution or production verification.</p></div></div></div>}
-function Metrics({chapter}:{chapter:Chapter}){return chapter.metrics.length?<div className="story-metrics">{chapter.metrics.map((m,i)=><div key={i}><strong>{m.value}</strong><span>{m.label}</span><details><summary>Counting rule</summary><p>{m.basis}</p></details></div>)}</div>:null}
-function StoryArt({chapter}:{chapter:Chapter}){return <div className="story-art"aria-hidden="true"><svg viewBox="0 0 500 400"><defs><pattern id="grid"width="30"height="30"patternUnits="userSpaceOnUse"><path d="M30 0H0V30"fill="none"stroke="currentColor"strokeOpacity=".13"/></pattern></defs><rect width="500"height="400"fill="url(#grid)"/><ellipse cx="250"cy="200"rx="207"ry="96"transform="rotate(-32 250 200)"/><ellipse cx="250"cy="200"rx="207"ry="96"transform="rotate(32 250 200)"/><circle cx="250"cy="200"r="118"/><path d="M250 65V335M115 200H385"strokeDasharray="3 7"/><circle cx="250"cy="200"r="9"fill="currentColor"/>{[0,1,2,3].map(i=><circle key={i}cx={[115,250,385,250][i]}cy={[200,65,200,335][i]}r="5"fill="currentColor"/>)}</svg><div className="art-words">{chapter.beats.slice(0,4).map((b,i)=><span key={i}><small>0{i+1}</small>{b.label||b.title}</span>)}</div></div>}
-function Wrapped({initial,close,onPerson}:{initial:string;close:()=>void;onPerson:(id:string)=>void}){
- const[person,setPerson]=useState(initial),[step,setStep]=useState(0),[sources,setSources]=useState(false),[beat,setBeat]=useState(0);const ref=useModal(close),stage=useRef<HTMLDivElement>(null);
- const story=data.stories.find(s=>s.personId===person),chapter=story?.chapters[Math.min(step,(story?.chapters.length||1)-1)];
- useEffect(()=>{setStep(0);setSources(false);setBeat(0)},[person]);useEffect(()=>{stage.current?.scrollTo(0,0);setSources(false);setBeat(0)},[step]);
- useEffect(()=>{function key(e:KeyboardEvent){if((e.target as HTMLElement)?.closest('select,input,textarea'))return;if(e.key==='ArrowRight'){e.preventDefault();setStep(v=>Math.min((story?.chapters.length||1)-1,v+1))}if(e.key==='ArrowLeft'){e.preventDefault();setStep(v=>Math.max(0,v-1))}}window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key)},[story]);
- const p=data.people.find(p=>p.id===person),theme=story?.theme||'ensemble';const themeStyle=theme.startsWith('#')?{'--accent':theme}:{};
- return <div className={'wrapped theme-'+theme.replace(/[^a-zA-Z0-9_-]/g,'')}style={themeStyle as React.CSSProperties}role="dialog"aria-modal="true"aria-label="Personalized year in review"ref={ref}>
- <header className="wrapped-header"><span className="wordmark">the year.<small>THE EXTENDED CUT</small></span><label><span>WHOSE STORY?</span><select aria-label="Choose Wrapped story"value={person}onChange={e=>{setPerson(e.target.value);onPerson(e.target.value)}}><option value="team">Whole team</option>{data.people.map(p=><option value={p.id}key={p.id}>{p.name}</option>)}</select><ChevronDown size={13}/></label><button className="icon-button"onClick={close}aria-label="Close Wrapped"><X size={23}/></button></header>
- {story&&<nav className="story-progress"aria-label={`Chapter ${step+1} of ${story.chapters.length}`}>{story.chapters.map((c,i)=><button key={c.id}className={i<=step?'read':''}aria-label={`Chapter ${i+1}: ${c.title}`}title={c.title}onClick={()=>setStep(i)}/>)}</nav>}
- <div className="story-stage"ref={stage}key={person+'-'+step}>{!story||!chapter?<div className="empty"><h2>No reviewed story is available.</h2><p>The timeline remains available. A personal story needs evidence and editorial review.</p></div>:<>
- {chapter.layout==='cover'?<div className="story-cover"><div><span className="kicker">{chapter.kicker}</span><span className="story-person">{p?.name||'The team'} / {reportYear}</span><h2>{chapter.title}</h2><p>{chapter.body||story.thesis}</p><div className="story-start"><span>{story.chapters.length} chapters.<br/>A reading of the recorded work.</span>{story.chapters.length>1&&<button onClick={()=>setStep(1)}aria-label="Begin this story"><ArrowRight size={25}/></button>}</div></div><StoryArt chapter={chapter}/></div>:chapter.layout==='finale'?<div className="story-finale"><span className="kicker">{chapter.kicker}</span><span className="finale-symbol">↗</span><h2>{chapter.title}</h2><p>{chapter.body}</p>{chapter.insight&&<blockquote>{chapter.insight}</blockquote>}<button className="button"onClick={()=>download('year-in-review-'+person+'.md',storyMarkdown(story))}><Download size={16}/>Keep the full story</button>{person==='team'&&<div className="person-doors">{data.people.map(p=><button key={p.id}onClick={()=>{setPerson(p.id);onPerson(p.id)}}><Avatar person={p}/>{p.name}<ArrowRight size={14}/></button>)}</div>}</div>:<div className={'chapter layout-'+chapter.layout}><div className="chapter-heading"><span className="kicker">{chapter.kicker}</span><h2>{chapter.title}</h2><p>{chapter.body}</p></div>
- {chapter.layout==='contrast'?<div className="contrast-grid"><div><span>THE EARLIER SHAPE</span><h3>{chapter.before||chapter.beats[0]?.title}</h3>{chapter.beats[0]&&<p>{chapter.beats[0].body}</p>}</div><ArrowRight size={24}/><div><span>THE RECORDED CHANGE</span><h3>{chapter.after||chapter.beats[1]?.title}</h3>{chapter.beats[1]&&<p>{chapter.beats[1].body}</p>}</div></div>:chapter.layout==='map'||chapter.layout==='journey'?<><div className={chapter.layout==='map'?'node-map':'journey-steps'}>{chapter.beats.map((b,i)=><button key={i}className={beat===i?'active':''}aria-pressed={beat===i}onClick={()=>setBeat(i)}><span>{b.label||String(i+1).padStart(2,'0')}</span><strong>{b.title}</strong><ArrowRight size={15}/></button>)}</div>{chapter.beats[beat]&&<div className="beat-detail"><h3>{chapter.beats[beat].title}</h3><p>{chapter.beats[beat].body}</p>{chapter.beats[beat].url&&safeUrl(chapter.beats[beat].url!)&&<a href={safeUrl(chapter.beats[beat].url!)}target="_blank"rel="noreferrer">Inspect this change<ArrowUpRight size={14}/></a>}</div>}</>:chapter.layout==='spotlight'?<div className="artifact-notes">{chapter.beats.map((b,i)=><article key={i}><span>{b.label||'FROM THE SOURCE RECORD'}</span><h3>{b.title}</h3><p>{b.body}</p>{b.url&&safeUrl(b.url)&&<a href={safeUrl(b.url)}target="_blank"rel="noreferrer">Inspect source<ArrowUpRight size={14}/></a>}</article>)}</div>:chapter.beats.length>0?<div className="ledger-notes">{chapter.beats.map((b,i)=><article key={i}><span>{b.label}</span><h3>{b.title}</h3><p>{b.body}</p></article>)}</div>:null}
- <Metrics chapter={chapter}/>{chapter.insight&&<aside className="story-insight"><span>THE READING</span><p>{chapter.insight}</p></aside>}</div>}
- </>}</div>
- <footer className="wrapped-footer"><button onClick={()=>setSources(!sources)}aria-expanded={sources}disabled={!chapter}><BookOpen size={15}/>{sources?'Close sources':'Why this reading?'}</button><span>{String(step+1).padStart(2,'0')}<i>/ {String(story?.chapters.length||0).padStart(2,'0')}</i></span><div><button onClick={()=>setStep(step-1)}disabled={step===0}aria-label="Previous Wrapped chapter"><ArrowLeft size={20}/></button><button onClick={()=>setStep(step+1)}disabled={!story||step>=story.chapters.length-1}aria-label="Next Wrapped chapter"><ArrowRight size={20}/></button></div></footer>
- {sources&&chapter&&<aside className="story-proof"aria-label="Chapter evidence"><header><span><ShieldCheck size={15}/>THE BASIS FOR THIS CHAPTER</span><button onClick={()=>setSources(false)}aria-label="Close chapter sources"><X size={20}/></button></header><div><p>This reading combines the cited source record and the interpretation stated in the chapter.</p>{chapter.metrics.map((m,i)=><section key={i}><h3>{m.value} · {m.label}</h3><p>{m.basis}</p></section>)}{chapter.evidence.map(e=><Source e={e}key={e.id}/>)}{!chapter.evidence.length&&<p>No evidence links were supplied for this chapter.</p>}<aside className="caveat">{data.coverage.summary}</aside></div></aside>}
- </div>
+const data = raw as Presentation;
+const formatter = new Intl.NumberFormat('en');
+const number = (value?: number) => value === undefined ? '—' : formatter.format(value);
+const people = new Map(data.people.map(person => [person.id, person]));
+const dateParts = new Intl.DateTimeFormat('en-CA', {
+  timeZone: data.meta.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+function dateKey(value: string) {
+  if (!value || value.length === 10) return value;
+  const fields = Object.fromEntries(dateParts.formatToParts(new Date(value)).map(part => [part.type, part.value]));
+  return [fields.year, fields.month, fields.day].join('-');
 }
 
-export default function App(){
- const[person,setPerson]=useState('team'),[repo,setRepo]=useState('all'),[month,setMonth]=useState('all'),[query,setQuery]=useState(''),[view,setView]=useState('timeline'),[wrapped,setWrapped]=useState(false),[selected,setSelected]=useState<Milestone|null>(null),[limit,setLimit]=useState(30);
- useEffect(()=>{document.title=data.meta.title||'A year in work'},[]);useEffect(()=>setLimit(30),[person,repo,month,query]);
- const p=data.people.find(p=>p.id===person),peopleMap=useMemo(()=>new Map(data.people.map(p=>[p.id,p])),[]),totals=data.meta.totals?.[person];
- const ownTimeline=useMemo(()=>data.timeline.filter(e=>person==='team'||e.people.includes(person)),[person]);
- const repos=[...new Set(ownTimeline.map(e=>e.repo))].sort();
- const months=useMemo(()=>{if(!data.meta.start||!data.meta.endExclusive)return [];const first=dateKey(data.meta.start).slice(0,7),last=dateKey(new Date(new Date(data.meta.endExclusive).getTime()-1).toISOString()).slice(0,7);const rows:string[]=[];let[y,m]=first.split('-').map(Number);for(let i=0;i<1200;i++){const key=String(y)+'-'+String(m).padStart(2,'0');if(key>last)break;rows.push(key);if(m===12){y++;m=1}else m++}return rows},[]);
- const activity=useMemo(()=>{const rows=data.activity.filter(a=>a.personId===person);return months.map(m=>{const part=rows.filter(a=>a.date.startsWith(m));return {month:m,label:monthLabel(m).split(' ')[0].slice(0,3),commits:part.reduce((n,a)=>n+a.commits,0),prs:part.reduce((n,a)=>n+a.prs,0),reviews:part.reduce((n,a)=>n+a.reviews,0)}})},[person,months]);
- const filtered=ownTimeline.filter(e=>(repo==='all'||e.repo===repo)&&(month==='all'||dateKey(e.date).startsWith(month))&&(!query||(e.title+' '+e.summary+' '+e.repo).toLowerCase().includes(query.toLowerCase()))).sort((a,b)=>new Date(a.date).getTime()-new Date(b.date).getTime());
- const story=data.stories.find(s=>s.personId===person);const max=Math.max(1,...activity.map(a=>a.commits));
- return <><div className="yearbook"inert={wrapped||!!selected}><header className="masthead"><a className="wordmark"href="#top">the year.<span>IN WORK</span></a><span className="mast-note"><i/>A source-linked retrospective</span><button className="icon-button"aria-label="About this research"onClick={()=>{setView('coverage');document.getElementById('workspace')?.scrollIntoView()}}><ShieldCheck size={18}/></button></header>
- <main id="top"><section className="hero"><div className="hero-copy"><span className="kicker"><Sparkles size={16}/>THE WORK. THE CRAFT. THE PEOPLE.</span><h1>A year of<br/><em>making things.</em></h1><p>{data.meta.title||'A year in work'}<br/>A recorded history, with the details still attached.</p><div className="hero-actions"><button className="button primary"disabled={!story}onClick={()=>setWrapped(true)}><Play size={13}/>Play {p?p.name.split(' ')[0]+'’s':'our'} year<ArrowUpRight size={17}/></button><a href="#workspace">Explore the timeline<ArrowRight size={15}/></a></div><div className="hero-dates"><span>{data.meta.start?dateKey(data.meta.start):'RESEARCH PENDING'}</span><i/><span>{data.meta.snapshotAt?dateKey(data.meta.snapshotAt):'NO SNAPSHOT'}</span><small>{data.meta.timezone}</small></div></div><div className="hero-art"aria-hidden="true"><span>THE ENGINEERING ARCHIVE<br/>A YEAR, RECONSTRUCTED.</span><div className="orbit a"/><div className="orbit b"/><div className="orbit c"/><strong>{(reportYear||'YEAR').slice(0,2)}<br/>{(reportYear||'YEAR').slice(2)}<b>✳</b></strong><footer>THE CHANGES.<span>THE STORY THEY LEAVE. ↗</span></footer></div></section>
- <section className="workspace"id="workspace"><div className="people-bar"><span>WHOSE STORY?</span><div className="people-filters"role="group"aria-label="Choose a team member"><button className={'person-chip '+(person==='team'?'selected':'')}aria-pressed={person==='team'}onClick={()=>{setPerson('team');setRepo('all')}}><Users size={16}/>Whole team<small>{data.people.length}</small></button>{data.people.map(p=><button key={p.id}className={'person-chip '+(person===p.id?'selected':'')}aria-pressed={person===p.id}onClick={()=>{setPerson(p.id);setRepo('all')}}><Avatar person={p}/>{p.name}{person===p.id&&<Check size={12}/>}</button>)}</div></div>
- <div className="scope-intro"><div><span className="kicker">{p?'ONE PERSON. A PART OF THE WHOLE.':'THE COLLECTIVE RECORD.'}</span><h2>{p?p.name+'’s year.':'Look at what took shape.'}</h2><p>{p?.headline||data.coverage.summary}</p></div><button className="wrap-link"disabled={!story}onClick={()=>setWrapped(true)}><Sparkles size={16}/>{p?'Personal':'Team'} Wrapped<ArrowUpRight size={16}/></button></div>
- <div className="stats-strip"aria-label="Full reporting period totals">{[[GitCommitHorizontal,'Non-merge commits',totals?.commits],[GitPullRequest,'Authored PRs',totals?.prs],[BookOpen,'Submitted reviews',totals?.reviews],[Layers3,'Repositories',totals?.repositories]].map(([Icon,label,value])=>{const I=Icon as typeof Users;return <div key={String(label)}><span><I size={15}/>{String(label)}</span><strong>{number(value as number|undefined)}</strong><small>Full reporting period{person==='team'?' · globally deduplicated':''}</small></div>})}</div>
- <div className="view-tabs"><nav aria-label="Yearbook views">{[['timeline','The timeline',CalendarDays],['activity','The rhythm',GitCommitHorizontal],['coverage','Method & coverage',ShieldCheck]].map(([id,label,Icon])=>{const I=Icon as typeof Users;return <button key={String(id)}className={view===id?'active':''}onClick={()=>setView(String(id))}><I size={15}/>{String(label)}</button>})}</nav><span>Snapshot / {data.meta.snapshotAt?dateKey(data.meta.snapshotAt):'not collected'}</span></div>
- {view==='timeline'?<><div className="filter-bar"><label className="search"><Search size={16}/><input aria-label="Search milestones"placeholder="Search a project, change or idea…"value={query}onChange={e=>setQuery(e.target.value)}/>{query&&<button aria-label="Clear search"onClick={()=>setQuery('')}><X size={14}/></button>}</label><label className="select-wrap"><select aria-label="Filter by repository"value={repo}onChange={e=>setRepo(e.target.value)}><option value="all">All repositories</option>{repos.map(r=><option key={r}value={r}>{r}</option>)}</select><ChevronDown size={13}/></label><label className="select-wrap"><select aria-label="Filter by month"value={month}onChange={e=>setMonth(e.target.value)}><option value="all">Full reporting period</option>{months.map(m=><option key={m}value={m}>{monthLabel(m)}</option>)}</select><ChevronDown size={13}/></label></div>
- <div className="timeline-layout"><aside className="year-sidebar"><span className="kicker">THE YEAR AT A GLANCE</span><div className="month-rail">{activity.map(a=><button className={month===a.month?'active':''}key={a.month}onClick={()=>setMonth(month===a.month?'all':a.month)}aria-label={monthLabel(a.month)+': '+a.commits+' non-merge commits'}><span>{a.label}</span><i><b style={{width:Math.max(a.commits?4:0,a.commits/max*100)+'%'}}/></i><small>{number(a.commits)}</small></button>)}</div><div className="sidebar-note"><span>✳</span><p>Follow the work.<br/>Keep the context.</p><small>Counts describe recorded activity.<br/>They do not measure effort or impact.</small></div>{story&&<button className="download-link"onClick={()=>download('year-in-review-'+person+'.md',storyMarkdown(story))}><Download size={13}/>Download this story</button>}</aside>
- <div className="timeline-main"><div className="timeline-heading"><div><h3>Chapters worth revisiting</h3><p>{filtered.length} selected milestones · chronological, with sources.</p></div><span className="tiny-label">START AT THE BEGINNING ↙</span></div>{!filtered.length?<div className="empty"><Search size={25}/><h3>{data.timeline.length?'No milestones match this view.':'The research is not ready yet.'}</h3><p>{data.timeline.length?'Try another repository, month or search.':'Supply an inspector-approved timeline and personal stories.'}</p></div>:<div className="timeline">{filtered.slice(0,limit).map((e,i)=><div key={e.id}>{(i===0||dateKey(e.date).slice(0,7)!==dateKey(filtered[i-1].date).slice(0,7))&&<div className="month-heading"><i/><h3>{monthLabel(dateKey(e.date).slice(0,7))}</h3></div>}<article className="timeline-card"><i className="timeline-node"/><div className="card-kicker"><span>{e.repo.split('/').at(-1)}</span><span>{dateKey(e.date)}</span></div><button className="milestone-title"onClick={()=>setSelected(e)}><h3>{e.title}</h3><ArrowUpRight size={19}/></button><p>{e.summary}</p><div className="card-meta"><span className={'stage '+e.stage}>{e.stage==='design'?'Design only':e.stage}</span>{e.caveat&&<span>Context included in evidence</span>}</div><footer><div>{e.people.map(id=><span key={id}title={peopleMap.get(id)?.name||id}><Avatar person={peopleMap.get(id)}/><small>{peopleMap.get(id)?.name||id}</small></span>)}</div><button onClick={()=>setSelected(e)}><GitCommitHorizontal size={13}/>{e.evidence.length} sources<ArrowRight size={13}/></button></footer></article></div>)}</div>}{filtered.length>limit&&<button className="load-more"onClick={()=>setLimit(limit+30)}>Continue the timeline<ArrowRight size={15}/></button>}</div></div></>:view==='activity'?<div className="rhythm-panel"><span className="kicker">THE RECORDED RHYTHM</span><h3>A year is made of different intervals.</h3><p>Monthly unique non-merge commits for {p?.name||'the team'}. The other filters do not change this full-period chart. {person==='team'?'Team rows are independently deduplicated, not calculated by adding member totals.':''}</p>{data.activity.some(a=>a.personId===person)?<><div className="activity-chart"><ResponsiveContainer width="100%"height="100%"><AreaChart data={activity}margin={{top:15,right:15,bottom:5,left:0}}><defs><linearGradient id="activity-fill"x1="0"y1="0"x2="0"y2="1"><stop offset="0%"stopColor={p?.color||'#829b49'}stopOpacity={.5}/><stop offset="100%"stopColor={p?.color||'#829b49'}stopOpacity={.03}/></linearGradient></defs><CartesianGrid vertical={false}stroke="#e3e7d9"/><XAxis dataKey="label"axisLine={false}tickLine={false}tick={{fontSize:11,fill:'#7f8971'}}/><YAxis allowDecimals={false}axisLine={false}tickLine={false}tick={{fontSize:10,fill:'#7f8971'}}/><Tooltip labelFormatter={(_,items)=>items?.[0]?.payload?.month?monthLabel(items[0].payload.month):''}formatter={value=>[number(Number(value)),'Non-merge commits']}/><Area dataKey="commits"type="linear"stroke={p?.color||'#728b3c'}fill="url(#activity-fill)"strokeWidth={2}isAnimationActive={false}/></AreaChart></ResponsiveContainer></div><details className="chart-table"><summary>View the chart as a table</summary><table><caption>Full-period monthly activity</caption><thead><tr><th>Month</th><th>Non-merge commits</th><th>Authored PRs</th><th>Reviews</th></tr></thead><tbody>{activity.map(a=><tr key={a.month}><th>{monthLabel(a.month)}</th><td>{number(a.commits)}</td><td>{number(a.prs)}</td><td>{number(a.reviews)}</td></tr>)}</tbody></table></details></>:<div className="empty"><h4>No approved activity series is available.</h4></div>}<p className="small-print">Timezone: {data.meta.timezone}. Recorded activity does not establish hours worked. Empty periods need to be interpreted alongside the coverage report.</p></div>:<div className="coverage-panel"><span className="kicker">THE METHOD / THE LIMITS</span><h3>A story you can trace.</h3><p>{data.coverage.summary}</p><div className="coverage-grid"><article><ShieldCheck size={23}/><h4>Reporting scope</h4><dl><dt>Start, inclusive</dt><dd>{data.meta.start||'Not supplied'}</dd><dt>End, exclusive</dt><dd>{data.meta.endExclusive||'Not supplied'}</dd><dt>Timezone</dt><dd>{data.meta.timezone}</dd><dt>Snapshot</dt><dd>{data.meta.snapshotAt||'Not supplied'}</dd></dl>{totals?.basis&&<p>{totals.basis}</p>}</article><article><BookOpen size={23}/><h4>Coverage and interpretation</h4><ul>{[...data.meta.coverageNotes,...data.coverage.limitations].map((n,i)=><li key={i}>{n}</li>)}</ul><p>Authorship, review, merging and release are different roles and states. A source change is evidence of implementation, not proof of a working production deployment.</p></article></div></div>}
- </section><section className="closing-band"><span>✳</span><div><span className="kicker">EVERY CHANGE LEAVES A TRACE.</span><h2>Keep the story behind it.</h2></div><button className="button primary"disabled={!story}onClick={()=>setWrapped(true)}><Play size={14}/>Revisit the year<ArrowUpRight size={16}/></button></section></main><footer className="site-footer"><a className="wordmark"href="#top">the year.</a><p>An interpretation of recorded work. Sources and coverage stay attached.</p><span>{reportYear}</span></footer></div>
- {wrapped&&<Wrapped initial={person}close={()=>setWrapped(false)}onPerson={id=>{setPerson(id);setRepo('all')}}/>}{selected&&<EvidenceDrawer item={selected}close={()=>setSelected(null)}/>}</>
+function dateLabel(value: string, options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' }) {
+  const key = dateKey(value);
+  return key ? new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'UTC' }).format(new Date(key + 'T12:00:00Z')) : '—';
+}
+
+const monthLabel = (key: string) => dateLabel(key + '-01', { month: 'long', year: 'numeric' });
+const endDate = data.meta.endExclusive ? dateKey(new Date(Date.parse(data.meta.endExclusive) - 1).toISOString()) : '';
+const startDate = dateKey(data.meta.start);
+const period = startDate && endDate ? dateLabel(startDate) + ' – ' + dateLabel(endDate) : 'Reporting period unavailable';
+const coverageLabel = data.coverage.status === 'complete' ? 'Scope collected' :
+  data.coverage.status === 'partial' ? 'Partial coverage' : 'Coverage notes';
+const stages = { implemented: 'Implemented', design: 'Design', merged: 'Merged', released: 'Released', unknown: 'Recorded' };
+const series = [
+  { key: 'commits', label: 'Non-merge commits' },
+  { key: 'prs', label: 'Authored pull requests' },
+  { key: 'reviews', label: 'Submitted reviews' },
+] as const;
+type SeriesKey = typeof series[number]['key'];
+type MonthActivity = { month: string } & Record<SeriesKey, number>;
+
+function safeUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? parsed.href : undefined;
+  } catch { return undefined; }
+}
+
+function beatSource(beat: Beat, chapter: Chapter) {
+  return chapter.evidence.find(item => beat.sourceId ? item.id === beat.sourceId : beat.url === item.url);
+}
+
+function downloadStory(story: Story) {
+  const chapters = story.chapters.map(chapter => [
+    '## ' + chapter.title,
+    chapter.body,
+    chapter.insight,
+    ...chapter.metrics.map(metric => '- ' + metric.value + ' ' + metric.label + ' (' + metric.basis + ')'),
+    ...chapter.beats.map(beat => '### ' + beat.title + '\n\n' + beat.body),
+    ...chapter.evidence.filter(item => safeUrl(item.url)).map(item => '- [' + item.label + '](' + item.url + ')'),
+  ].filter(Boolean).join('\n\n'));
+  const content = ['# ' + story.title, story.thesis, ...chapters, '## Coverage', coverageLabel,
+    data.coverage.summary, ...data.coverage.limitations].join('\n\n');
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'year-in-review-' + story.personId + '.md';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function Avatar({ person }: { person?: Person }) {
+  const initials = person?.name.trim().split(/\s+/).slice(0, 2).map(word => word[0]).join('');
+  return <span className="avatar" aria-hidden="true" style={{ backgroundColor: person?.color }}>
+    {initials || <Users size={14} />}
+  </span>;
+}
+
+function Stage({ stage }: { stage: Milestone['stage'] }) {
+  return <span className={'stage stage-' + stage}>{stages[stage]}</span>;
+}
+
+function SourceList({ items }: { items: Evidence[] }) {
+  if (!items.length) return <p className="muted">No sources are attached to this chapter.</p>;
+  return <ul className="source-list">{items.map(item => {
+    const url = safeUrl(item.url);
+    return <li key={item.id}>
+      <span className="source-id">{item.id}</span>
+      {url ? <a href={url} target="_blank" rel="noreferrer">{item.label}<ArrowUpRight size={15} /></a> : <strong>{item.label}</strong>}
+      {item.excerpt && <details><summary>Inspected excerpt</summary><pre>{item.excerpt}</pre></details>}
+    </li>;
+  })}</ul>;
+}
+
+function Dialog({ label, className, close, children }: {
+  label: string; className: string; close: () => void; children: React.ReactNode;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    element?.showModal();
+    document.body.style.overflow = 'hidden';
+    return () => {
+      element?.close();
+      document.body.style.overflow = overflow;
+      previous?.focus();
+    };
+  }, []);
+  return <dialog aria-label={label} className={className} ref={dialog}
+    onCancel={event => { event.preventDefault(); close(); }}
+    onClick={event => { if (event.target === event.currentTarget) close(); }}>
+    <div className="dialog-shell">{children}</div>
+  </dialog>;
+}
+
+function EvidenceDrawer({ item, close }: { item: Milestone; close: () => void }) {
+  return <Dialog label="Milestone evidence" className="drawer" close={close}>
+    <header className="dialog-top"><span><BookOpen size={17} /> Milestone evidence</span>
+      <button className="icon-button" aria-label="Close milestone evidence" onClick={close}><X size={21} /></button>
+    </header>
+    <div className="drawer-content">
+      <div className="milestone-meta"><Stage stage={item.stage} /><time dateTime={item.date}>{dateLabel(item.date)}</time></div>
+      <h2>{item.title}</h2><p>{item.summary}</p><code>{item.repo}</code>
+      {item.caveat && <p className="note">{item.caveat}</p>}
+      <h3>Sources</h3><SourceList items={item.evidence} />
+    </div>
+  </Dialog>;
+}
+
+function ChapterBody({ chapter }: { chapter: Chapter }) {
+  return <>
+    <p className="chapter-body">{chapter.body}</p>
+    {chapter.metrics.length > 0 && <div className="chapter-metrics">{chapter.metrics.map((metric, index) =>
+      <div key={index}><strong>{metric.value}</strong><span>{metric.label}</span>
+        <details><summary>Counting rule</summary><p>{metric.basis}</p></details></div>)}</div>}
+    {(chapter.before || chapter.after || chapter.beats.length > 0) && <div className={'chapter-beats layout-' + chapter.layout}>
+      {chapter.before && <p><strong>Before</strong>{chapter.before}</p>}
+      {chapter.after && <p><strong>After</strong>{chapter.after}</p>}
+      {chapter.beats.map((beat, index) => {
+        const source = beatSource(beat, chapter);
+        const url = source && safeUrl(source.url);
+        return <article key={index}>{beat.label && <span className="eyebrow">{beat.label}</span>}
+          <h3>{beat.title}</h3><p>{beat.body}</p>{url && <a href={url} target="_blank" rel="noreferrer">Source<ArrowUpRight size={14} /></a>}
+        </article>;
+      })}
+    </div>}
+    {chapter.insight && <blockquote>{chapter.insight}</blockquote>}
+    {chapter.evidence.length > 0 && <details className="chapter-sources">
+      <summary><BookOpen size={16} /> Chapter sources <span>{chapter.evidence.length}</span></summary>
+      <SourceList items={chapter.evidence} />
+    </details>}
+  </>;
+}
+
+function Wrapped({ story, close, changePerson }: { story: Story; close: () => void; changePerson: (id: string) => void }) {
+  const [step, setStep] = useState(0);
+  const scroll = useRef<HTMLDivElement>(null);
+  const chapter = story.chapters[step];
+  function go(index: number) {
+    setStep(Math.max(0, Math.min(index, story.chapters.length - 1)));
+    scroll.current?.scrollTo({ top: 0 });
+  }
+  return <Dialog label="Wrapped story" className="wrapped" close={close}>
+    <header className="dialog-top"><span><BookOpen size={18} /> Wrapped</span>
+      <div className="wrapped-actions">
+        <select aria-label="Choose Wrapped story" value={story.personId} onChange={event => { go(0); changePerson(event.target.value); }}>
+          {data.stories.map(entry => <option key={entry.personId} value={entry.personId}>{people.get(entry.personId)?.name ?? 'Whole team'}</option>)}
+        </select>
+        <button className="icon-button" aria-label="Download story" onClick={() => downloadStory(story)}><Download size={18} /></button>
+        <button className="icon-button" aria-label="Close Wrapped" onClick={close}><X size={21} /></button>
+      </div>
+    </header>
+    <div className="reader-layout" onKeyDown={event => {
+      if ((event.target as HTMLElement).closest('select')) return;
+      if (event.key === 'ArrowLeft') { event.preventDefault(); go(step - 1); }
+      if (event.key === 'ArrowRight') { event.preventDefault(); go(step + 1); }
+    }}>
+      <nav className="chapter-nav" aria-label="Chapters">
+        {story.chapters.map((item, index) => <button key={item.id} aria-current={index === step ? 'step' : undefined}
+          onClick={() => go(index)}><span>{index + 1}</span>{item.title}</button>)}
+      </nav>
+      <div className="chapter-scroll" ref={scroll}>
+        <article className={'chapter-page chapter-' + chapter.layout}>
+          <header><span className="eyebrow">{chapter.kicker}</span><h2>{chapter.title}</h2></header>
+          <ChapterBody chapter={chapter} />
+        </article>
+      </div>
+    </div>
+    <footer className="reader-footer">
+      <button className="button secondary" onClick={() => go(step - 1)} disabled={step === 0}><ArrowLeft size={16} /> Previous</button>
+      <span aria-live="polite">{step + 1} / {story.chapters.length}</span>
+      <button className="button primary" onClick={() => go(step + 1)} disabled={step === story.chapters.length - 1}>Next <ArrowRight size={16} /></button>
+    </footer>
+  </Dialog>;
+}
+
+function aggregate(person: string): MonthActivity[] {
+  const months = new Map<string, MonthActivity>();
+  if (startDate && endDate) {
+    const cursor = new Date(startDate.slice(0, 7) + '-01T12:00:00Z');
+    while (cursor.toISOString().slice(0, 10) <= endDate) {
+      const month = cursor.toISOString().slice(0, 7);
+      months.set(month, { month, commits: 0, prs: 0, reviews: 0 });
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    }
+  }
+  for (const entry of data.activity) {
+    if (entry.personId !== person) continue;
+    const month = months.get(entry.date.slice(0, 7));
+    if (month) for (const { key } of series) month[key] += entry[key];
+  }
+  return [...months.values()];
+}
+
+function MonthlyActivity({ months, chooseMonth, selected }: {
+  months: MonthActivity[]; chooseMonth: (month: string) => void; selected: string;
+}) {
+  const [metric, setMetric] = useState<SeriesKey>('commits');
+  const label = series.find(item => item.key === metric)!.label;
+  const maximum = Math.max(1, ...months.map(month => month[metric]));
+  return <section className="activity-card" aria-label="Monthly activity">
+    <header><h2>Activity by month</h2><label className="select-field">
+      <select aria-label="Activity metric" value={metric} onChange={event => setMetric(event.target.value as SeriesKey)}>
+        {series.map(item => <option value={item.key} key={item.key}>{item.label}</option>)}
+      </select><ChevronDown size={14} />
+    </label></header>
+    {months.length ? <div className="month-chart" aria-label={label + ' by month'}>
+      {months.map(month => <button key={month.month} aria-pressed={selected === month.month}
+        aria-label={monthLabel(month.month) + ', ' + number(month[metric]) + ' ' + label.toLowerCase()}
+        onClick={() => chooseMonth(month.month)}>
+        <span className="bar-track"><span style={{ height: 100 * month[metric] / maximum + '%' }} /></span>
+        <span className="chart-month">{dateLabel(month.month + '-01', { month: 'short' })}</span>
+        <strong>{number(month[metric])}</strong>
+      </button>)}
+    </div> : <p className="muted">Monthly activity is unavailable.</p>}
+  </section>;
+}
+
+function ActivityTable({ months }: { months: MonthActivity[] }) {
+  return <div className="table-scroll"><table>
+    <caption>Monthly counts for the selected person or team</caption>
+    <thead><tr><th scope="col">Month</th>{series.map(item => <th key={item.key} scope="col">{item.label}</th>)}</tr></thead>
+    <tbody>{months.map(month => <tr key={month.month}><th scope="row">{monthLabel(month.month)}</th>
+      {series.map(item => <td key={item.key}>{number(month[item.key])}</td>)}</tr>)}</tbody>
+  </table></div>;
+}
+
+function Coverage() {
+  return <section className="coverage-view">
+    <span className="coverage-chip"><ShieldCheck size={15} />{coverageLabel}</span>
+    <h2>Method & coverage</h2><p>{data.coverage.summary}</p>
+    <dl><div><dt>Reporting period</dt><dd>{period}</dd></div><div><dt>Timezone</dt><dd>{data.meta.timezone}</dd></div>
+      <div><dt>Snapshot</dt><dd>{dateLabel(data.meta.snapshotAt)}</dd></div></dl>
+    <h3>Collection notes</h3>
+    <ul>{[...new Set([...data.meta.coverageNotes, ...data.coverage.limitations])].map(note => <li key={note}>{note}</li>)}</ul>
+  </section>;
+}
+
+export default function App() {
+  const [person, setPerson] = useState('team');
+  const [repo, setRepo] = useState('all');
+  const [month, setMonth] = useState('all');
+  const [query, setQuery] = useState('');
+  const [view, setView] = useState<'timeline' | 'activity' | 'coverage'>('timeline');
+  const [wrapped, setWrapped] = useState(false);
+  const [selected, setSelected] = useState<Milestone | null>(null);
+  const [limit, setLimit] = useState(24);
+  const currentPerson = people.get(person);
+  const story = data.stories.find(entry => entry.personId === person);
+  const totals = data.meta.totals?.[person];
+  const months = useMemo(() => aggregate(person), [person]);
+  const ownTimeline = useMemo(() => data.timeline.filter(item => person === 'team' || item.people.includes(person)), [person]);
+  const repositories = [...new Set(ownTimeline.map(item => item.repo))].sort();
+  const search = query.trim().toLowerCase();
+  const filtered = ownTimeline.filter(item => (repo === 'all' || item.repo === repo)
+    && (month === 'all' || dateKey(item.date).startsWith(month))
+    && (!search || [item.title, item.summary, item.repo].join(' ').toLowerCase().includes(search)))
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+  const grouped = new Map<string, Milestone[]>();
+  for (const item of filtered.slice(0, limit)) {
+    const key = dateKey(item.date).slice(0, 7);
+    const group = grouped.get(key);
+    if (group) group.push(item);
+    else grouped.set(key, [item]);
+  }
+
+  useEffect(() => { document.title = data.meta.title || 'GitHub Wrap Up'; }, []);
+  useEffect(() => setLimit(24), [person, repo, month, query]);
+
+  function changePerson(id: string) { setPerson(id); setRepo('all'); }
+  function selectMonth(value: string) { setMonth(value === month ? 'all' : value); setView('timeline'); }
+  function showCoverage() { setView('coverage'); document.getElementById('report')?.scrollIntoView(); }
+  function reset() { setRepo('all'); setMonth('all'); setQuery(''); }
+
+  return <>
+    <a className="skip-link" href="#report">Skip to the report</a>
+    <header className="site-header"><div className="header-inner">
+      <a href="#top" className="brand">GitHub Wrap Up</a>
+      <div>
+        <button className="text-button coverage-trigger" onClick={showCoverage}>{coverageLabel}</button>
+        <button className="text-button" disabled={!story} onClick={() => setWrapped(true)}>Open Wrapped <ArrowUpRight size={16} /></button>
+      </div>
+    </div></header>
+    <main id="top" className="container">
+      <section className="overview">
+        <div className="overview-copy">
+          <h1>{data.meta.title || 'GitHub year in review'}</h1>
+          {story?.thesis && <p>{story.thesis}</p>}
+        </div>
+        <div className="edition">
+          <dl><dt>Reporting period</dt><dd>{period}</dd><dt>Reporting timezone</dt><dd>{data.meta.timezone}</dd></dl>
+          <a href="#report" onClick={() => setView('timeline')}>Explore timeline <ArrowDown size={15} /></a>
+        </div>
+      </section>
+
+      <section aria-label="Totals for the full reporting period" className="summary-section">
+        <div className="summary-label"><span>{currentPerson?.name ?? 'Whole team'}</span><span>Full reporting period</span></div>
+        <dl className="summary">
+          {[...series, { key: 'repositories' as const, label: 'Repositories' }].map(({ key, label }) =>
+            <div className="stat" key={key}><dt>{label}</dt><dd>{number(totals?.[key])}</dd></div>)}
+        </dl>
+      </section>
+
+      <section id="report" className="report">
+        <div className="report-nav">
+          <nav aria-label="Report sections">
+            {([['timeline', 'Timeline', CalendarDays], ['activity', 'Activity', ActivityIcon], ['coverage', 'Coverage', ShieldCheck]] as const)
+              .map(([id, label, Icon]) => <button key={id} aria-pressed={view === id} onClick={() => setView(id)}><Icon size={17} />{label}</button>)}
+          </nav>
+          <label className="select-field person-select"><Users size={16} /><select aria-label="Select person" value={person} onChange={event => changePerson(event.target.value)}>
+            <option value="team">Whole team</option>{data.people.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select><ChevronDown size={14} /></label>
+        </div>
+        {currentPerson && <div className="person-heading"><Avatar person={currentPerson} /><div><strong>{currentPerson.name}</strong><p>{currentPerson.headline}</p></div></div>}
+
+        {view === 'coverage' ? <Coverage /> : view === 'activity' ? <div className="activity-view">
+          <MonthlyActivity months={months} chooseMonth={selectMonth} selected={month} /><ActivityTable months={months} />
+        </div> : <>
+          <div className="report-grid">
+            <section className="timeline-panel">
+              <div className="timeline-heading"><div><h2>Timeline</h2><p aria-live="polite">{number(filtered.length)} {filtered.length === 1 ? 'milestone' : 'milestones'}</p></div>
+                {(query || month !== 'all' || repo !== 'all') && <button className="text-button" onClick={reset}>Clear filters</button>}
+              </div>
+              <div className="filters">
+                <label className="search-field"><Search size={17} /><input aria-label="Search milestones" placeholder="Search milestones" value={query} onChange={event => setQuery(event.target.value)} /></label>
+                <label className="select-field"><select aria-label="Repository" value={repo} onChange={event => setRepo(event.target.value)}>
+                  <option value="all">All repositories</option>{repositories.map(name => <option key={name}>{name}</option>)}
+                </select><ChevronDown size={14} /></label>
+                <label className="select-field"><select aria-label="Month" value={month} onChange={event => setMonth(event.target.value)}>
+                  <option value="all">All months</option>{months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)}</option>)}
+                </select><ChevronDown size={14} /></label>
+              </div>
+              {filtered.length === 0 && <div className="empty"><CalendarDays size={24} /><h3>{ownTimeline.length ? 'No matching milestones' : 'No reviewed milestones'}</h3>
+                <p>{ownTimeline.length ? 'Try a different search or clear the filters.' : 'Activity and coverage are available in the report tabs.'}</p></div>}
+              {[...grouped].map(([key, items]) => <section className="month-section" key={key}>
+                <h3>{monthLabel(key)}</h3>
+                <div>{items.map(item => <article className="milestone" key={item.id}>
+                  <time className="milestone-date" dateTime={item.date}>{dateLabel(item.date, { day: 'numeric', month: 'short' })}</time>
+                  <div className="milestone-content">
+                  <div className="milestone-meta"><code>{item.repo}</code><Stage stage={item.stage} /></div>
+                  <h4><button onClick={() => setSelected(item)}>{item.title}<ArrowUpRight size={17} /></button></h4>
+                  <p>{item.summary}</p>
+                  <footer><span className="credit">{item.people.map(id => people.get(id)?.name || id).join(', ')}</span>
+                    <button className="text-button" onClick={() => setSelected(item)}>{item.evidence.length} {item.evidence.length === 1 ? 'source' : 'sources'}<ArrowRight size={14} /></button>
+                  </footer>
+                  </div>
+                </article>)}</div>
+              </section>)}
+              {filtered.length > limit && <button className="button secondary more" onClick={() => setLimit(limit + 24)}>Show more milestones <ArrowDown size={16} /></button>}
+            </section>
+            <aside className="report-aside">
+              <MonthlyActivity months={months} chooseMonth={selectMonth} selected={month} />
+              {story && <section className="story-card"><p className="eyebrow">Wrapped · {story.chapters.length} {story.chapters.length === 1 ? 'chapter' : 'chapters'}</p>
+                <h2>{story.title}</h2>
+                <button className="text-button" onClick={() => setWrapped(true)}>Read the story <ArrowUpRight size={16} /></button>
+              </section>}
+            </aside>
+          </div>
+        </>}
+      </section>
+      <footer className="page-footer"><span>GitHub Wrap Up</span><span>{period}</span>
+        {story && <button className="text-button" onClick={() => downloadStory(story)}><Download size={15} /> Download story</button>}
+      </footer>
+    </main>
+    {wrapped && story && <Wrapped story={story} close={() => setWrapped(false)} changePerson={changePerson} />}
+    {selected && <EvidenceDrawer item={selected} close={() => setSelected(null)} />}
+  </>;
 }

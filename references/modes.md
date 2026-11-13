@@ -3,8 +3,8 @@
 Read before model-facing research. The invoking prompt selects low, medium or high (case-insensitive; med/meduim normalize to medium). Default Medium for a new run without asking; an unspecified mode on resume preserves the existing choice. Each mode also resolves suitable model capability and supported reasoning effort; read [model-selection.md](model-selection.md) before dispatch. The root retains harness-selected settings. A mode is a work allowance, never a claim about exact token billing or a quality score.
 
 | Per person | Low | Medium (default) | High |
-| Researcher profile | Efficient / economical effort | Balanced / moderate effort | Balanced or deep / deep effort |
 |---|---:|---:|---:|
+| Researcher profile | Efficient / economical effort | Balanced / moderate effort | Balanced or deep / deep effort |
 | Initial substantive evidence packets | 24 | 80 | 240 |
 | Follow-up rounds | 1 | 2 | 3 |
 | Additional packets per follow-up round | 6 | 20 | 60 |
@@ -14,7 +14,7 @@ Read before model-facing research. The invoking prompt selects low, medium or hi
 | Optional independent challenge | No | Material uncertainty only | Required |
 | Presentation effort | Reuse personalized layouts | Selected custom diagrams | Broader bespoke composition where useful |
 
-These are ceilings, not quotas. Do less for a sparse record. Each packet is at most 12,000 JSON characters; a huge PR is split across packets. Each returned job summary is at most 10,000 characters. There are at most two bounded metadata-brief deliveries per subject. The shared root/team allowance is 12/32/64 initial packets in Low/Medium/High, with 3/8/16 packets per allowed follow-up round. It covers synthesis and inspection; it is not multiplied by team size.
+These are ceilings, not quotas. Do less for a sparse record. Each packet is at most 12,000 JSON characters; a huge PR is split across packets. Each returned job summary is at most 10,000 characters. There are at most two bounded metadata-brief deliveries per registered job. The shared root/team allowance is 12/32/64 initial packets in Low/Medium/High, with 3/8/16 packets per allowed follow-up round. It covers synthesis and inspection; it is not multiplied by team size.
 
 ## What remains identical
 
@@ -32,9 +32,9 @@ The complete weekly record stays on disk in all modes. Low can produce metadata-
 python3 <skill>/scripts/research_mode.py --run <run> plan --mode medium
 ```
 
-If usable agents or model discovery/selection are unavailable, choose `--execution sequential-fallback --reason '<actual runtime limitation>'` and report that child model/effort profiles and their relative cost savings are not achieved. A model-only harness can instead use selected workers with inherited/unknown effort; disclose that the effort profile was not achieved. Switching only execution strategy records the runtime reason; it does not authorize an increase in depth. For multiple people, coordinate one at a time/in bounded waves so workers can run.
+For a personal or small overlapping scope, or when usable agents or model controls are unavailable, choose `--execution sequential-fallback --reason '<actual runtime limitation>'` and report that child model/effort profiles and their relative cost savings are not achieved. A model-only harness can instead use selected workers with inherited/unknown effort; disclose that the effort profile was not achieved. Switching only execution strategy records the runtime reason; it does not authorize an increase in depth. For multiple people, coordinate one at a time/in bounded waves so workers can run.
 
-2. Register every fresh model research context before delivering evidence. Low has one efficient researcher per person, including a single-person run, no person coordinator or repository subagents. Medium uses bounded batches and High single-repository researchers. Reuse existing agent contexts for follow-up rather than spawning duplicates. The root inspector is a shared team job. Use the actual agent identifier, not a generic placeholder, in real runs.
+2. Register every fresh model research context before delivering evidence. Low has one researcher job per person, with no person coordinator or repository subagents. A single root can carry out multiple jobs in sequence. Medium uses bounded batches and High single-repository researchers. Reuse existing agent contexts for follow-up rather than spawning duplicates. The root inspector is a shared team job. Use the actual agent identifier, not a generic placeholder, in real runs.
 
 ```sh
 python3 <skill>/scripts/research_mode.py --run <run> job --subject <person> --job-id <job> --role researcher --agent <agent> --repos <owner/repo>
@@ -42,7 +42,7 @@ python3 <skill>/scripts/research_mode.py --run <run> brief --subject <person> --
 python3 <skill>/scripts/research_mode.py --run <run> packet --subject <person> --job-id <job> --bundle-id <unique-reading> --sources '<source-id>' --level diff
 ```
 
-Briefs contain full totals, bounded monthly facts and representative metadata leads selected across month/repo/role groups. They disclose clipped groups/inventory. Never load entire facts.sourceIndex, raw records or every patch into an agent context. Use scripts to locate IDs and request focused packets. All repositories/months retain recorded activity and coverage, even when the reading allowance cannot cover them substantively.
+Briefs contain whole-subject totals and bounded monthly facts, with metadata leads drawn from the job’s assigned repositories. Packets for a repository-limited job use those same assignments. They disclose clipped groups/inventory. Never load entire facts.sourceIndex, raw records or every patch into an agent context. Use scripts to locate IDs and request focused packets. All repositories/months retain recorded activity and coverage, even when the reading allowance cannot cover them substantively.
 
 Packets deliver selected source excerpts, not a declaration that an agent inspected them. After reading, write observations to the normal read log with returned budgetEntryId, sourceId, actual agent and inspection level. Source metadata cannot be relabeled as diff inspection. Re-reading in another context requires another delivery/unique bundle ID and consumes the recipient's allowance. Source-file paths must remain inside the run; historical excerpts can use `--file <run-relative-file>` with one source ID. Do not execute studied code.
 
